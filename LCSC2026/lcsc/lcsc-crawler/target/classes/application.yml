@@ -1,0 +1,117 @@
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: ${SERVER_CONTEXT_PATH:}
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  mvc:
+    async:
+      request-timeout: 300000
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 核心修正：使用 docker-compose 中定义的容器名 lcsc-mysql 和内部端口 3306
+    url: ${DATABASE_URL:jdbc:mysql://lcsc-mysql:3306/lcsc?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${DATABASE_USERNAME:lcsc_user}
+    password: ${DATABASE_PASSWORD:lcsc123456}
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      auto-commit: true
+      idle-timeout: 30000
+      pool-name: LcscHikariCP
+      max-lifetime: 1800000
+      connection-timeout: 30000
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+
+  redis:
+    # 核心修正：使用容器名 lcsc-redis 和内部原始端口 6379
+    host: lcsc-redis
+    port: 6379
+    password: lcsc123456
+    database: 0
+
+  sql:
+    init:
+      schema-locations: classpath:db/lcsc_full_schema.sql
+      mode: NEVER
+      continue-on-error: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: auto
+
+crawler:
+  # --- 1. 主爬虫并发与频率控制 ---
+  # 对应线程池大小
+  thread-pool-size: ${CRAWLER_THREADS:5}
+  # 每次接口请求的基础间隔(ms)
+  delay: ${CRAWLER_DELAY:2000}
+  # 请求超时时间(ms)
+  timeout: ${CRAWLER_TIMEOUT:10000}
+
+  # --- 2. 错误重试机制控制 ---
+  # 最大重试次数
+  max-retry: ${CRAWLER_MAX_RETRY:10}
+  # 重试之间的等待间隔(ms)
+  retry-interval: ${CRAWLER_RETRY_INTERVAL:5000}
+  auto-retry: true
+
+  # --- 3. 资源下载并发与间隔控制 (图片/PDF) ---
+  # 图片下载最大并发数
+  image-concurrency: ${IMAGE_CONCURRENCY:5}
+  # 每张图片下载后的间隔(ms)
+  image-delay: ${IMAGE_DELAY:500}
+  # PDF下载最大并发数 (建议设小)
+  pdf-concurrency: ${PDF_CONCURRENCY:1}
+  # 每个PDF下载后的间隔(ms)
+  pdf-delay: ${PDF_DELAY:1500}
+
+  # --- 其他基础配置 ---
+  user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  headless: true
+  save-images: true
+  enable-pdf-download: true
+  split:
+    max-depth: 3
+    threshold: 4800
+  api:
+    catalog-url: "https://wmsc.lcsc.com/ftps/wm/product/catalogs/search"
+    search-param-group-url: "https://wmsc.lcsc.com/ftps/wm/product/search/param/group"
+    search-list-url: "https://wmsc.lcsc.com/ftps/wm/product/search/list"
+  storage:
+    base-path: "${CRAWLER_STORAGE_PATH:.}"
+  http:
+    debug:
+      enabled: ${CRAWLER_HTTP_DEBUG_ENABLED:true}
+      print-full-response: ${CRAWLER_HTTP_DEBUG_FULL_RESPONSE:true}
+      print-headers: ${CRAWLER_HTTP_DEBUG_HEADERS:false}
+      max-response-length: ${CRAWLER_HTTP_DEBUG_MAX_LENGTH:10000}
+      print-api-call-details: ${CRAWLER_HTTP_DEBUG_API_DETAILS:true}
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
+    com.lcsc: ${APP_LOG_LEVEL:DEBUG}
+    org.springframework.jdbc: DEBUG
+    org.mybatis: DEBUG
+    com.baomidou.mybatisplus: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/lcsc-crawler.log
+    max-size: 10MB
+    max-history: 30

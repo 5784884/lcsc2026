@@ -1,0 +1,210 @@
+{
+  "groups": [
+    {
+      "name": "crawler",
+      "type": "com.lcsc.config.CrawlerConfig",
+      "sourceType": "com.lcsc.config.CrawlerConfig"
+    },
+    {
+      "name": "crawler.api",
+      "type": "com.lcsc.config.CrawlerConfig$Api",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "sourceMethod": "getApi()"
+    },
+    {
+      "name": "crawler.http.debug",
+      "type": "com.lcsc.config.HttpDebugConfig",
+      "sourceType": "com.lcsc.config.HttpDebugConfig"
+    },
+    {
+      "name": "crawler.storage",
+      "type": "com.lcsc.config.CrawlerConfig$Storage",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "sourceMethod": "getStorage()"
+    }
+  ],
+  "properties": [
+    {
+      "name": "crawler.api.catalog-url",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Api",
+      "defaultValue": "https:\/\/wmsc.lcsc.com\/ftps\/wm\/product\/catalogs\/search"
+    },
+    {
+      "name": "crawler.api.search-list-url",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Api",
+      "defaultValue": "https:\/\/wmsc.lcsc.com\/ftps\/wm\/product\/search\/list"
+    },
+    {
+      "name": "crawler.api.search-param-group-url",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Api",
+      "defaultValue": "https:\/\/wmsc.lcsc.com\/ftps\/wm\/product\/search\/param\/group"
+    },
+    {
+      "name": "crawler.auto-retry",
+      "type": "java.lang.Boolean",
+      "description": "是否自动重试",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": true
+    },
+    {
+      "name": "crawler.delay",
+      "type": "java.lang.Long",
+      "description": "爬取间隔(毫秒)",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 2000
+    },
+    {
+      "name": "crawler.enable-pdf-download",
+      "type": "java.lang.Boolean",
+      "description": "是否开启 PDF 下载",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": true
+    },
+    {
+      "name": "crawler.headless",
+      "type": "java.lang.Boolean",
+      "description": "是否启用无头模式",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": true
+    },
+    {
+      "name": "crawler.http.debug.enabled",
+      "type": "java.lang.Boolean",
+      "description": "是否启用HTTP调试日志",
+      "sourceType": "com.lcsc.config.HttpDebugConfig",
+      "defaultValue": true
+    },
+    {
+      "name": "crawler.http.debug.max-response-length",
+      "type": "java.lang.Integer",
+      "description": "响应体最大打印长度（字符数）",
+      "sourceType": "com.lcsc.config.HttpDebugConfig",
+      "defaultValue": 10000
+    },
+    {
+      "name": "crawler.http.debug.print-api-call-details",
+      "type": "java.lang.Boolean",
+      "description": "是否打印API调用的详细信息",
+      "sourceType": "com.lcsc.config.HttpDebugConfig",
+      "defaultValue": true
+    },
+    {
+      "name": "crawler.http.debug.print-full-response",
+      "type": "java.lang.Boolean",
+      "description": "是否打印完整的响应体",
+      "sourceType": "com.lcsc.config.HttpDebugConfig",
+      "defaultValue": true
+    },
+    {
+      "name": "crawler.http.debug.print-headers",
+      "type": "java.lang.Boolean",
+      "description": "是否打印请求头信息",
+      "sourceType": "com.lcsc.config.HttpDebugConfig",
+      "defaultValue": false
+    },
+    {
+      "name": "crawler.image-concurrency",
+      "type": "java.lang.Integer",
+      "description": "图片下载最大并发数",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 5
+    },
+    {
+      "name": "crawler.image-delay",
+      "type": "java.lang.Long",
+      "description": "图片下载间隔(毫秒)",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 500
+    },
+    {
+      "name": "crawler.max-retry",
+      "type": "java.lang.Integer",
+      "description": "最大重试次数",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 10
+    },
+    {
+      "name": "crawler.pdf-concurrency",
+      "type": "java.lang.Integer",
+      "description": "PDF 下载最大并发数",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 1
+    },
+    {
+      "name": "crawler.pdf-delay",
+      "type": "java.lang.Long",
+      "description": "PDF 下载间隔(毫秒)",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 1500
+    },
+    {
+      "name": "crawler.retry-interval",
+      "type": "java.lang.Long",
+      "description": "重试之间的等待间隔(毫秒)",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 5000
+    },
+    {
+      "name": "crawler.save-images",
+      "type": "java.lang.Boolean",
+      "description": "是否保存图片",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": true
+    },
+    {
+      "name": "crawler.storage.base-path",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Storage",
+      "defaultValue": "."
+    },
+    {
+      "name": "crawler.storage.data-dir",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Storage",
+      "defaultValue": "data"
+    },
+    {
+      "name": "crawler.storage.export-dir",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Storage",
+      "defaultValue": "exports"
+    },
+    {
+      "name": "crawler.storage.image-dir",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Storage",
+      "defaultValue": "images"
+    },
+    {
+      "name": "crawler.storage.pdf-dir",
+      "type": "java.lang.String",
+      "sourceType": "com.lcsc.config.CrawlerConfig$Storage",
+      "defaultValue": "pdfs"
+    },
+    {
+      "name": "crawler.thread-pool-size",
+      "type": "java.lang.Integer",
+      "description": "并发线程数",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 5
+    },
+    {
+      "name": "crawler.timeout",
+      "type": "java.lang.Long",
+      "description": "超时时间(毫秒)",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": 10000
+    },
+    {
+      "name": "crawler.user-agent",
+      "type": "java.lang.String",
+      "description": "User-Agent",
+      "sourceType": "com.lcsc.config.CrawlerConfig",
+      "defaultValue": "Mozilla\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\/537.36 (KHTML, like Gecko) Chrome\/120.0.0.0 Safari\/537.36"
+    }
+  ],
+  "hints": []
+}
