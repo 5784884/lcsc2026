@@ -491,6 +491,8 @@ public class CategoryCrawlerWorkerPool {
             // ====== 拆分检测逻辑：突破5000条限制 ======
             log.warn("======= [诊断] Worker-{} 准备调用needSplit: totalProducts={} =======", workerId, totalProducts);
             boolean needSplit = taskSplitService.needSplit(totalProducts);
+            // 🌟 补上这个关键修复：打破3层深度限制，强制保底允许拆分 6 层！
+            int actualMaxDepth = Math.max(maxSplitDepth, 6);
             log.warn("======= [诊断] Worker-{} needSplit返回: {}, currentSplitLevel={}, maxSplitDepth={}, 条件判断={} =======",
                     workerId, needSplit, currentSplitLevel, maxSplitDepth, (currentSplitLevel < maxSplitDepth && needSplit));
             log.info("Worker-{} 拆分检测: totalProducts={}, currentSplitLevel={}, maxSplitDepth={}, needSplit={}, 条件结果={}",
@@ -498,10 +500,11 @@ public class CategoryCrawlerWorkerPool {
                     (currentSplitLevel < maxSplitDepth && needSplit));
 
             // 检查是否需要拆分（支持多级拆分，只要未达到最大深度）
-            if (currentSplitLevel < maxSplitDepth && needSplit) {
+            // 🌟 注意这里的判断条件改成了 actualMaxDepth
+            if (currentSplitLevel < actualMaxDepth && needSplit) {
                 String splitDimension = getSplitDimension(currentSplitLevel);
                 log.warn("Worker-{} 分类 {} 产品总数 {} 超过限制，启动{}拆分策略（当前深度={}/{}）",
-                        workerId, catalogName, totalProducts, splitDimension, currentSplitLevel, maxSplitDepth);
+                        workerId, catalogName, totalProducts, splitDimension, currentSplitLevel, actualMaxDepth);
 
                 try {
                     // 获取拆分单元列表（根据当前深度选择不同维度）
@@ -517,9 +520,27 @@ public class CategoryCrawlerWorkerPool {
 
                         for (com.lcsc.dto.SplitUnit splitUnit : splitUnits) {
                             try {
-                                // 合并累积的筛选参数
+                                // 替换为正确的深度合并代码：
                                 Map<String, Object> newFilterParams = new HashMap<>(accumulatedFilters);
-                                newFilterParams.putAll(splitUnit.getFilterParams());
+                                Map<String, Object> splitParams = splitUnit.getFilterParams();
+
+                                if (splitParams != null) {
+                                    for (Map.Entry<String, Object> entry : splitParams.entrySet()) {
+                                        String key = entry.getKey();
+                                        Object val = entry.getValue();
+
+                                        if ("paramNameValueMap".equals(key) && newFilterParams.containsKey(key)) {
+                                            @SuppressWarnings("unchecked")
+                                            Map<String, Object> existingMap = new HashMap<>((Map<String, Object>) newFilterParams.get(key));
+                                            @SuppressWarnings("unchecked")
+                                            Map<String, Object> newMap = (Map<String, Object>) val;
+                                            existingMap.putAll(newMap);
+                                            newFilterParams.put(key, existingMap);
+                                        } else {
+                                            newFilterParams.put(key, val);
+                                        }
+                                    }
+                                }
 
                                 queueService.createSplitTask(
                                         taskId,                                // parentTaskId
@@ -694,8 +715,8 @@ public class CategoryCrawlerWorkerPool {
                 // 延迟，避免请求过快
                 Thread.sleep(500);
             }
-
             // 8. 完成
+
             // 8. 完成（性能狂飙版：彻底删除 SELECT COUNT，解放数据库连接池！）
             if (level2Category != null) {
                 // 只有主任务才去更新最终状态，子任务只需默默落盘数据即可

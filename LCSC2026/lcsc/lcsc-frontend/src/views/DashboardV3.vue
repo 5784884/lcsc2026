@@ -980,19 +980,32 @@ const loadAllCategoriesForSelector = async () => {
     if (data && data.length > 0) {
       let mappedData = data.map((item: any) => {
 
-        // 👇 核心修复 1：根据级别加上后端的偏移量 (20亿 / 10亿)
-        let offsetId = item.id;
+        // 🌟 终极精准提取：绝对不串级！优先拿自己的 id，如果没有再按级别拿专属字段
+        let trueId = item.id;
+        if (!trueId) {
+          if (item.categoryLevel === 'level3') {
+            trueId = item.categoryLevel3Id;
+          } else if (item.categoryLevel === 'level2' || item.isPureLevel2) {
+            trueId = item.categoryLevel2Id;
+          } else {
+            trueId = item.categoryLevel1Id;
+          }
+        }
+
+        // 根据级别加上后端的偏移量 (20亿 / 10亿)
+        let offsetId = trueId;
         if (item.categoryLevel === 'level3') {
-          offsetId = item.id + 2000000000;
+          offsetId = trueId + 2000000000;
         } else if (item.categoryLevel === 'level2' || item.isPureLevel2) {
-          offsetId = item.id + 1000000000;
+          offsetId = trueId + 1000000000;
         }
 
         return {
           id: offsetId, // 传给 Tree 组件和后端的带偏移量 ID
-          rawId: item.id, // 保留真实的数据库 ID 备用
+          rawId: trueId, // 保留真实的数据库 ID 备用
           name: item.categoryName || item.categoryLevel3Name || item.categoryLevel2Name,
-          // 👇 修复这里：必须给 level2Id 也加上 10 亿的偏移量，树组件才能把 L3 挂在 L2 下面！
+
+          // 必须给 level2Id 也加上 10 亿的偏移量，树组件才能把 L3 挂在 L2 下面！
           level2Id: item.categoryLevel2Id ? item.categoryLevel2Id + 1000000000 : null,
 
           level2Name: item.categoryLevel2Name,
@@ -1003,6 +1016,7 @@ const loadAllCategoriesForSelector = async () => {
         };
       })
 
+      // 下面的排序逻辑保持不变...
       mappedData.sort((a, b) => {
         const l1A = String(a.level1Name || '')
         const l1B = String(b.level1Name || '')

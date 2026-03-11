@@ -681,7 +681,7 @@ const groupBy = (array: any[], key: string) => {
 }
 
 // ================= 终极智能解析：严格防膨胀版 =================
-// ================= 全新多选解析逻辑 (支持无限多选) =================
+// ================= 终极智能解析：兼容偏移量与智能降维版 =================
 const parseSelectedCategories = () => {
   const result = {
     categoryLevel1Id: [] as number[],
@@ -689,65 +689,96 @@ const parseSelectedCategories = () => {
     categoryLevel3Id: [] as number[]
   }
 
-  if (selectedCategories.value.length === 0) {
-    return result; // 没选则返回空数组
-  }
+  if (selectedCategories.value.length === 0) return result;
 
-  // 1. 去除前端组件伪造的魔数前缀
+  // 1. 剥离前端组件伪造的魔数前缀，提取出真实的数据库 ID
   const realIds = selectedCategories.value.map(id => {
-    if (id > 2000000000) return id - 2000000000
-    if (id > 1000000000) return id - 1000000000
-    return id
-  })
+    if (id > 2000000000) return id - 2000000000;
+    if (id > 1000000000) return id - 1000000000;
+    return id;
+  });
 
-  // 提取真正的叶子节点列表
-  const leafNodes = allCategories.value.filter(c => c.level2Id !== undefined || c.isPureLevel2)
-  const matchedItems = leafNodes.filter(item => realIds.includes(item.id))
+  // 2. 从全部数据中找出对应被选中的真实节点 (🔥 重点：使用 rawId 匹配)
+  const matchedNodes = allCategories.value.filter(item => realIds.includes(item.rawId));
 
-  // 2. 依然保留智能降维（防URL过长）：如果某个二级分类全选了，就只传二级的ID，不传几百个三级ID
-  const groupedByLevel1 = groupBy(matchedItems, 'level1Id')
+  // 3. 构建干净的节点数据，去除父级的偏移量干扰，方便做降维计算
+  const cleanNodes = matchedNodes.map(node => ({
+    rawId: node.rawId,
+    level1Id: node.level1Id,
+    // 如果父级带了 10亿 偏移量，这里将其还原
+    level2Id: node.level2Id ? (node.level2Id > 1000000000 ? node.level2Id - 1000000000 : node.level2Id) : null,
+    isL3: node.id > 2000000000,
+    isPureL2: node.id > 1000000000 && node.id <= 2000000000
+  }));
+
+  // 获取所有有效的叶子节点（用于判断是否全选）
+  const allCleanLeafNodes = allCategories.value.filter(c => c.level2Id !== undefined || c.isPureLevel2).map(node => ({
+    rawId: node.rawId,
+    level1Id: node.level1Id,
+    level2Id: node.level2Id ? (node.level2Id > 1000000000 ? node.level2Id - 1000000000 : node.level2Id) : null,
+  }));
+
+  // 4. 智能降维逻辑（防 URL 超长）
+  const groupedByLevel1 = groupBy(cleanNodes, 'level1Id');
   for (const l1Id in groupedByLevel1) {
-    if (!l1Id || l1Id === 'undefined') continue
-    const itemsInL1 = groupedByLevel1[l1Id]
-    const allLeafInL1 = leafNodes.filter(c => String(c.level1Id) === l1Id)
+    if (!l1Id || l1Id === 'undefined' || l1Id === 'null') continue;
 
+    const itemsInL1 = groupedByLevel1[l1Id];
+    const allLeafInL1 = allCleanLeafNodes.filter(c => String(c.level1Id) === l1Id);
+
+    // 如果某个 L1 下所有的叶子节点都被选中了 -> 只传 L1 ID
     if (itemsInL1.length === allLeafInL1.length && allLeafInL1.length > 0) {
-      result.categoryLevel1Id.push(Number(l1Id)) // 全选了一级
-      continue
+      result.categoryLevel1Id.push(Number(l1Id));
+      continue;
     }
 
-    const groupedByLevel2 = groupBy(itemsInL1, 'level2Id')
+    const groupedByLevel2 = groupBy(itemsInL1, 'level2Id');
     for (const l2Id in groupedByLevel2) {
-      if (!l2Id || l2Id === 'undefined') continue
-      const itemsInL2 = groupedByLevel2[l2Id]
-      const allLeafInL2 = leafNodes.filter(c => String(c.level2Id) === l2Id)
+      const itemsInL2 = groupedByLevel2[l2Id];
 
+      // 没有归属 L2 的独立节点处理
+      if (!l2Id || l2Id === 'undefined' || l2Id === 'null') {
+        itemsInL2.forEach((item: any) => {
+          if (item.isL3) result.categoryLevel3Id.push(item.rawId);
+          else if (item.isPureL2) result.categoryLevel2Id.push(item.rawId);
+        });
+        continue;
+      }
+
+      const allLeafInL2 = allCleanLeafNodes.filter(c => String(c.level2Id) === l2Id);
+
+      // 如果某个 L2 下所有的叶子节点都被选中了 -> 只传 L2 ID
       if (itemsInL2.length === allLeafInL2.length && allLeafInL2.length > 0) {
-        result.categoryLevel2Id.push(Number(l2Id)) // 全选了二级
+        result.categoryLevel2Id.push(Number(l2Id));
       } else {
-        // 🌟 核心突破：零散选的多个三级，全部放进数组里！
-        itemsInL2.forEach(item => result.categoryLevel3Id.push(item.id))
+        // 零散选的叶子节点，按它的真实级别分别推入
+        itemsInL2.forEach((item: any) => {
+          if (item.isL3) result.categoryLevel3Id.push(item.rawId);
+          else if (item.isPureL2) result.categoryLevel2Id.push(item.rawId);
+        });
       }
     }
   }
 
-  // 处理纯父节点勾选
+  // 5. 处理纯父节点勾选 (兜底)
   realIds.forEach(id => {
-    if (!matchedItems.find(m => m.id === id)) {
-      if (allCategories.value.some(c => c.level1Id === id)) result.categoryLevel1Id.push(id)
-      else if (allCategories.value.some(c => c.level2Id === id)) result.categoryLevel2Id.push(id)
-      else result.categoryLevel3Id.push(id)
+    if (!cleanNodes.find(m => m.rawId === id)) {
+      const found = allCategories.value.find(c => c.rawId === id);
+      if (found) {
+        if (found.id > 2000000000) result.categoryLevel3Id.push(id);
+        else if (found.id > 1000000000) result.categoryLevel2Id.push(id);
+        else result.categoryLevel1Id.push(id);
+      }
     }
-  })
+  });
 
-  return result
+  // 6. 极致防爆去重
+  result.categoryLevel1Id = Array.from(new Set(result.categoryLevel1Id));
+  result.categoryLevel2Id = Array.from(new Set(result.categoryLevel2Id));
+  result.categoryLevel3Id = Array.from(new Set(result.categoryLevel3Id));
+
+  return result;
 }
-// =================================================================
-// =========================================================
-// =========================================================
-// =========================================================
-// =========================================================
-
 // 响应式数据
 const loading = ref(false)
 const tableData = ref<Product[]>([])
@@ -885,22 +916,32 @@ const loadAllCategoriesForSelector = async () => {
     if (data && data.length > 0) {
       let mappedData = data.map((item: any) => {
 
-        // 🌟 核心修复 1：根据级别加上相应的偏移量
-        let offsetId = item.id;
+        // 🌟 终极精准提取：绝对不串级！优先拿自己的 id，如果没有再按级别拿专属字段
+        let trueId = item.id;
+        if (!trueId) {
+          if (item.categoryLevel === 'level3') {
+            trueId = item.categoryLevel3Id;
+          } else if (item.categoryLevel === 'level2' || item.isPureLevel2) {
+            trueId = item.categoryLevel2Id;
+          } else {
+            trueId = item.categoryLevel1Id;
+          }
+        }
+
+        // 根据级别加上后端的偏移量 (20亿 / 10亿)
+        let offsetId = trueId;
         if (item.categoryLevel === 'level3') {
-          offsetId = item.id + 2000000000;
+          offsetId = trueId + 2000000000;
         } else if (item.categoryLevel === 'level2' || item.isPureLevel2) {
-          offsetId = item.id + 1000000000;
+          offsetId = trueId + 1000000000;
         }
 
         return {
-          // 🌟 核心修复 2：使用带偏移量的 ID 给树组件
-          id: offsetId,
-          rawId: item.id, // 保留真实的数据库 ID 备用
-
+          id: offsetId, // 传给 Tree 组件和后端的带偏移量 ID
+          rawId: trueId, // 保留真实的数据库 ID 备用
           name: item.categoryName || item.categoryLevel3Name || item.categoryLevel2Name,
 
-          // 🌟 核心修复 3：父节点 L2 的 ID 也必须加上 10 亿偏移量，否则 L3 挂载不上！
+          // 必须给 level2Id 也加上 10 亿的偏移量，树组件才能把 L3 挂在 L2 下面！
           level2Id: item.categoryLevel2Id ? item.categoryLevel2Id + 1000000000 : null,
 
           level2Name: item.categoryLevel2Name,
@@ -908,10 +949,10 @@ const loadAllCategoriesForSelector = async () => {
           level1Name: item.categoryLevel1Name || `L1-${item.categoryLevel1Id}`,
           totalProducts: item.totalProducts || item.crawledProducts || item.crawled_products || item.crawledCount || item.savedCount || 0,
           isPureLevel2: item.categoryLevel === 'level2'
-        }
+        };
       })
 
-      // 下面的 A-Z 排序逻辑保持不变...
+      // 下面的排序逻辑保持不变...
       mappedData.sort((a, b) => {
         const l1A = String(a.level1Name || '')
         const l1B = String(b.level1Name || '')
@@ -931,7 +972,7 @@ const loadAllCategoriesForSelector = async () => {
       allCategories.value = mappedData
     }
   } catch (error) {
-    console.error('加载分类数据失败:', error)
+    console.error('加载所有分类失败:', error)
   }
 }
 // ==============================================================

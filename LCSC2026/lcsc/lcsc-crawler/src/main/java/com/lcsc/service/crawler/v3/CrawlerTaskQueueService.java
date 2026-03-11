@@ -78,31 +78,30 @@ public class CrawlerTaskQueueService {
      * @param priority    优先级（10=手动, 1=自动）
      * @return 任务ID
      */
+    /**
+     * 创建单个分类爬取任务（支持明确指定分类级别）
+     * @param categoryId 分类ID
+     * @param forcedLevel 强制指定分类级别（"level2" 或 "level3"），传null则自动识别
+     * @param priority 优先级（10=手动, 1=自动）
+     * @return 任务ID
+     */
     public String createCategoryTask(Integer categoryId, String forcedLevel, int priority) {
         try {
-            // 🌟 1. 强制清理历史残留：如果有正在处理的任务，强制移出，当作新任务重新发！
+            // 🌟 修复：移除暴力踢出逻辑，恢复老版本的安全保护机制
+            // 1. 检查任务（包括其子任务）是否正在处理中，如果是，绝对不能破坏当前队列
+            if (isTaskProcessing(categoryId)) {
+                log.warn("分类任务（或其子任务）正在高速处理中，拦截重复触发请求: categoryId={}", categoryId);
+                throw new RuntimeException("该分类正在爬取中，请耐心等待其完成");
+            }
+
+            // 2. 检查任务是否已在待处理队列中
             String oldTaskId = (String) redisTemplate.opsForHash().get(CATALOG_TO_TASK_MAP, String.valueOf(categoryId));
             if (oldTaskId != null) {
-                log.info("发现历史残留任务，强制重置状态: categoryId={}, oldTaskId={}", categoryId, oldTaskId);
+                log.info("任务已在待处理队列，仅重置状态，不干扰子任务: categoryId={}, oldTaskId={}", categoryId, oldTaskId);
                 redisTemplate.opsForZSet().remove(QUEUE_PENDING, oldTaskId);
-                redisTemplate.opsForSet().remove(QUEUE_PROCESSING, oldTaskId); // 从处理中队列也移除
                 redisTemplate.opsForHash().delete(CATALOG_TO_TASK_MAP, String.valueOf(categoryId));
                 redisTemplate.opsForSet().remove(DEDUP_SET, String.valueOf(categoryId));
                 redisTemplate.opsForHash().increment(STATE_KEY, "totalTasks", -1);
-            } else if (isTaskProcessing(categoryId)) {
-                log.warn("任务似乎正在处理中，强制踢出以重新开始: categoryId={}", categoryId);
-                // 通过暴力遍历从 processing 队列踢出（兜底）
-                Set<Object> processingTaskIds = redisTemplate.opsForSet().members(QUEUE_PROCESSING);
-                if (processingTaskIds != null) {
-                    for (Object tIdObj : processingTaskIds) {
-                        String tId = (String) tIdObj;
-                        String tCatId = (String) redisTemplate.opsForHash().get(TASK_PREFIX + tId, "categoryId");
-                        if (tCatId != null && tCatId.equals(String.valueOf(categoryId))) {
-                            redisTemplate.opsForSet().remove(QUEUE_PROCESSING, tId);
-                            redisTemplate.opsForSet().remove(DEDUP_SET, String.valueOf(categoryId));
-                        }
-                    }
-                }
             }
 
             // 3. 识别分类级别（如果指定了forcedLevel，直接使用；否则智能识别）
@@ -119,74 +118,55 @@ public class CrawlerTaskQueueService {
                 categoryLevel = forcedLevel;
                 if ("level2".equals(forcedLevel)) {
                     level2 = level2Mapper.selectById(categoryId);
-                    if (level2 == null) {
-                        throw new RuntimeException("二级分类不存在: " + categoryId);
-                    }
+                    if (level2 == null) throw new RuntimeException("二级分类不存在: " + categoryId);
                     catalogName = level2.getCategoryLevel2Name();
                     catalogApiId = level2.getCatalogId();
                     level1Id = level2.getCategoryLevel1Id();
                     level2Id = level2.getId();
-                    log.debug("强制指定为二级分类: id={}, name={}", categoryId, catalogName);
                 } else if ("level3".equals(forcedLevel)) {
                     level3 = level3Service.getOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CategoryLevel3Code>()
                             .eq(CategoryLevel3Code::getId, categoryId));
-                    if (level3 == null) {
-                        throw new RuntimeException("三级分类不存在: " + categoryId);
-                    }
+                    if (level3 == null) throw new RuntimeException("三级分类不存在: " + categoryId);
                     catalogName = level3.getCategoryLevel3Name();
                     catalogApiId = level3.getCatalogId();
                     level1Id = level3.getCategoryLevel1Id();
                     level2Id = level3.getCategoryLevel2Id();
-                    log.debug("强制指定为三级分类: id={}, name={}, level2Id={}", categoryId, catalogName, level2Id);
                 } else {
                     throw new RuntimeException("无效的分类级别: " + forcedLevel);
                 }
             } else {
                 // 智能识别分类级别（先查二级，再查三级）
                 level2 = level2Mapper.selectById(categoryId);
-
                 if (level2 != null) {
-                    // 是二级分类
                     categoryLevel = "level2";
                     catalogName = level2.getCategoryLevel2Name();
                     catalogApiId = level2.getCatalogId();
                     level1Id = level2.getCategoryLevel1Id();
                     level2Id = level2.getId();
-                    log.debug("智能识别为二级分类: id={}, name={}, catalogApiId={}", categoryId, catalogName, catalogApiId);
                 } else {
-                    // 尝试查询三级分类
                     level3 = level3Service.getOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CategoryLevel3Code>()
                             .eq(CategoryLevel3Code::getId, categoryId));
-
-                    if (level3 == null) {
-                        throw new RuntimeException("分类不存在: " + categoryId);
-                    }
-
-                    // 是三级分类
+                    if (level3 == null) throw new RuntimeException("分类不存在: " + categoryId);
                     categoryLevel = "level3";
                     catalogName = level3.getCategoryLevel3Name();
                     catalogApiId = level3.getCatalogId();
                     level1Id = level3.getCategoryLevel1Id();
                     level2Id = level3.getCategoryLevel2Id();
-                    log.debug("智能识别为三级分类: id={}, name={}, catalogApiId={}, level2Id={}",
-                            categoryId, catalogName, catalogApiId, level2Id);
                 }
             }
 
             // 4. 查询一级分类信息
             CategoryLevel1Code level1 = level1Mapper.selectById(level1Id);
-            if (level1 == null) {
-                throw new RuntimeException("一级分类不存在");
-            }
+            if (level1 == null) throw new RuntimeException("一级分类不存在");
 
             // 5. 生成任务ID
             String taskId = "TASK_" + categoryId + "_" + System.currentTimeMillis();
 
             // 6. 构建任务详情
             Map<String, String> taskDetail = new HashMap<>();
-            taskDetail.put("categoryId", String.valueOf(categoryId)); // 数据库ID
-            taskDetail.put("categoryLevel", categoryLevel); // "level2" 或 "level3"
-            taskDetail.put("catalogApiId", catalogApiId); // 立创API的catalogId
+            taskDetail.put("categoryId", String.valueOf(categoryId));
+            taskDetail.put("categoryLevel", categoryLevel);
+            taskDetail.put("catalogApiId", catalogApiId);
             taskDetail.put("catalogName", catalogName);
             taskDetail.put("level1Id", String.valueOf(level1Id));
             taskDetail.put("level1Name", level1.getCategoryLevel1Name());
@@ -221,9 +201,6 @@ public class CrawlerTaskQueueService {
 
             // 11. 更新全局统计
             redisTemplate.opsForHash().increment(STATE_KEY, "totalTasks", 1);
-
-            log.info("创建/更新任务成功: taskId={}, categoryId={}, level={}, name={}, priority={}",
-                    taskId, categoryId, categoryLevel, catalogName, priority);
 
             return taskId;
 
@@ -347,6 +324,12 @@ public class CrawlerTaskQueueService {
      * @param success      是否成功
      * @param errorMessage 错误信息（失败时）
      */
+    /**
+     * 完成任务
+     * @param taskId 任务ID
+     * @param success 是否成功
+     * @param errorMessage 错误信息（失败时）
+     */
     public void completeTask(String taskId, boolean success, String errorMessage) {
         try {
             // 1. 获取任务信息
@@ -362,67 +345,74 @@ public class CrawlerTaskQueueService {
             Integer catalogId = Integer.valueOf(catalogIdStr);
             String categoryLevel = (String) taskMap.get("categoryLevel");
 
+            // 判断是否是子任务 以及 是否是已拆分的父任务
+            String isSubTask = (String) taskMap.get("isSubTask");
+            boolean isSubTaskFlag = "true".equals(isSubTask);
+            String redisStatus = (String) taskMap.get("status");
+            boolean isSplitParent = "SPLIT".equals(redisStatus);
+
             // 2. 移出处理中队列
             redisTemplate.opsForSet().remove(QUEUE_PROCESSING, taskId);
 
-            // 3. 移除去重标记
-            redisTemplate.opsForSet().remove(DEDUP_SET, catalogIdStr);
+            // 🌟 修复：如果是子任务，或者是已拆分的父任务，绝对不能释放全局锁，否则会遭到外力重新触发破坏
+            if (!isSubTaskFlag && !isSplitParent) {
+                redisTemplate.opsForSet().remove(DEDUP_SET, catalogIdStr);
+                redisTemplate.opsForHash().delete(CATALOG_TO_TASK_MAP, catalogIdStr);
+            }
 
-            // 3b. 从映射中移除（双保险）
-            redisTemplate.opsForHash().delete(CATALOG_TO_TASK_MAP, catalogIdStr);
-
-            // 4. 更新任务状态
-            redisTemplate.opsForHash().put(TASK_PREFIX + taskId, "status",
-                    success ? "COMPLETED" : "FAILED");
-            redisTemplate.opsForHash().put(TASK_PREFIX + taskId, "completedAt",
-                    LocalDateTime.now().toString());
+            // 4. 更新任务状态（如果是拆分父任务，保持SPLIT状态，不覆盖）
+            String finalStatus = isSplitParent ? "SPLIT" : (success ? "COMPLETED" : "FAILED");
+            redisTemplate.opsForHash().put(TASK_PREFIX + taskId, "status", finalStatus);
+            redisTemplate.opsForHash().put(TASK_PREFIX + taskId, "completedAt", LocalDateTime.now().toString());
             if (!success && errorMessage != null) {
                 redisTemplate.opsForHash().put(TASK_PREFIX + taskId, "errorMessage", errorMessage);
             }
 
             // 5. 更新全局统计
-            if (success) {
-                redisTemplate.opsForHash().increment(STATE_KEY, "completedTasks", 1);
-            } else {
-                redisTemplate.opsForHash().increment(STATE_KEY, "failedTasks", 1);
-            }
-
-            // 6. 更新数据库中的分类状态（支持二级和三级分类）
-            if ("level3".equals(categoryLevel)) {
-                // 三级分类
-                CategoryLevel3Code level3 = level3Service.getOne(
-                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CategoryLevel3Code>()
-                                .eq(CategoryLevel3Code::getId, catalogId)
-                );
-                if (level3 != null) {
-                    level3.setCrawlStatus(success ? "COMPLETED" : "FAILED");
-                    level3.setLastCrawlTime(LocalDateTime.now());
-                    if (!success && errorMessage != null) {
-                        level3.setErrorMessage(errorMessage);
-                    }
-                    level3Service.updateById(level3);
-                }
-            } else {
-                // 二级分类
-                CategoryLevel2Code category = level2Mapper.selectById(catalogId);
-                if (category != null) {
-                    category.setCrawlStatus(success ? "COMPLETED" : "FAILED");
-                    category.setLastCrawlTime(LocalDateTime.now());
-                    if (!success && errorMessage != null) {
-                        category.setErrorMessage(errorMessage);
-                    }
-                    level2Mapper.updateById(category);
+            if (!isSplitParent) {
+                if (success) {
+                    redisTemplate.opsForHash().increment(STATE_KEY, "completedTasks", 1);
+                } else {
+                    redisTemplate.opsForHash().increment(STATE_KEY, "failedTasks", 1);
                 }
             }
 
-            log.info("任务完成: taskId={}, catalogId={}, level={}, success={}",
-                    taskId, catalogId, categoryLevel, success);
+            // 🌟 修复：防止父任务拆分时立刻把数据库改成COMPLETED，或者子任务乱改状态
+            // 只有真正没被拆分的普通主任务，才在这里更新数据库。子任务的汇总交由 WorkerPool 处理
+            if (!isSubTaskFlag && !isSplitParent) {
+                if ("level3".equals(categoryLevel)) {
+                    CategoryLevel3Code level3 = level3Service.getOne(
+                            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CategoryLevel3Code>()
+                                    .eq(CategoryLevel3Code::getId, catalogId)
+                    );
+                    if (level3 != null) {
+                        level3.setCrawlStatus(success ? "COMPLETED" : "FAILED");
+                        level3.setLastCrawlTime(LocalDateTime.now());
+                        if (!success && errorMessage != null) {
+                            level3.setErrorMessage(errorMessage);
+                        }
+                        level3Service.updateById(level3);
+                    }
+                } else {
+                    CategoryLevel2Code category = level2Mapper.selectById(catalogId);
+                    if (category != null) {
+                        category.setCrawlStatus(success ? "COMPLETED" : "FAILED");
+                        category.setLastCrawlTime(LocalDateTime.now());
+                        if (!success && errorMessage != null) {
+                            category.setErrorMessage(errorMessage);
+                        }
+                        level2Mapper.updateById(category);
+                    }
+                }
+            }
+
+            log.info("任务出队完成: taskId={}, catalogId={}, subTask={}, status={}",
+                    taskId, catalogId, isSubTaskFlag, finalStatus);
 
         } catch (Exception e) {
             log.error("完成任务时出错: taskId={}", taskId, e);
         }
     }
-
     /**
      * 检查任务是否已在队列中（待处理或处理中）
      */

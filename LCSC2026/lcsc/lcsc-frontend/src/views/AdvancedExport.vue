@@ -444,22 +444,32 @@ const loadAllCategoriesForSelector = async () => {
     if (data && data.length > 0) {
       let mappedData = data.map((item: any) => {
 
-        // 🌟 核心修复 1：根据级别加上相应的偏移量
-        let offsetId = item.id;
+        // 🌟 终极精准提取：绝对不串级！优先拿自己的 id，如果没有再按级别拿专属字段
+        let trueId = item.id;
+        if (!trueId) {
+          if (item.categoryLevel === 'level3') {
+            trueId = item.categoryLevel3Id;
+          } else if (item.categoryLevel === 'level2' || item.isPureLevel2) {
+            trueId = item.categoryLevel2Id;
+          } else {
+            trueId = item.categoryLevel1Id;
+          }
+        }
+
+        // 根据级别加上后端的偏移量 (20亿 / 10亿)
+        let offsetId = trueId;
         if (item.categoryLevel === 'level3') {
-          offsetId = item.id + 2000000000;
+          offsetId = trueId + 2000000000;
         } else if (item.categoryLevel === 'level2' || item.isPureLevel2) {
-          offsetId = item.id + 1000000000;
+          offsetId = trueId + 1000000000;
         }
 
         return {
-          // 🌟 核心修复 2：使用带偏移量的 ID 给树组件
-          id: offsetId,
-          rawId: item.id, // 保留真实的数据库 ID 备用
-
+          id: offsetId, // 传给 Tree 组件和后端的带偏移量 ID
+          rawId: trueId, // 保留真实的数据库 ID 备用
           name: item.categoryName || item.categoryLevel3Name || item.categoryLevel2Name,
 
-          // 🌟 核心修复 3：父节点 L2 的 ID 也必须加上 10 亿偏移量，否则 L3 挂载不上！
+          // 必须给 level2Id 也加上 10 亿的偏移量，树组件才能把 L3 挂在 L2 下面！
           level2Id: item.categoryLevel2Id ? item.categoryLevel2Id + 1000000000 : null,
 
           level2Name: item.categoryLevel2Name,
@@ -467,10 +477,10 @@ const loadAllCategoriesForSelector = async () => {
           level1Name: item.categoryLevel1Name || `L1-${item.categoryLevel1Id}`,
           totalProducts: item.totalProducts || item.crawledProducts || item.crawled_products || item.crawledCount || item.savedCount || 0,
           isPureLevel2: item.categoryLevel === 'level2'
-        }
+        };
       })
 
-      // 下面的 A-Z 排序逻辑保持不变...
+      // 下面的排序逻辑保持不变...
       mappedData.sort((a, b) => {
         const l1A = String(a.level1Name || '')
         const l1B = String(b.level1Name || '')
@@ -490,7 +500,7 @@ const loadAllCategoriesForSelector = async () => {
       allCategories.value = mappedData
     }
   } catch (error) {
-    console.error('加载分类数据失败:', error)
+    console.error('加载所有分类失败:', error)
   }
 }
 
