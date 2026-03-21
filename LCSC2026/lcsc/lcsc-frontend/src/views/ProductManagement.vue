@@ -682,6 +682,7 @@ const groupBy = (array: any[], key: string) => {
 
 // ================= 终极智能解析：严格防膨胀版 =================
 // ================= 终极智能解析：兼容偏移量与智能降维版 =================
+// ================= 极简、零冲突的分类解析 =================
 const parseSelectedCategories = () => {
   const result = {
     categoryLevel1Id: [] as number[],
@@ -689,90 +690,20 @@ const parseSelectedCategories = () => {
     categoryLevel3Id: [] as number[]
   }
 
-  if (selectedCategories.value.length === 0) return result;
+  if (!selectedCategories.value || selectedCategories.value.length === 0) return result;
 
-  // 1. 剥离前端组件伪造的魔数前缀，提取出真实的数据库 ID
-  const realIds = selectedCategories.value.map(id => {
-    if (id > 2000000000) return id - 2000000000;
-    if (id > 1000000000) return id - 1000000000;
-    return id;
-  });
-
-  // 2. 从全部数据中找出对应被选中的真实节点 (🔥 重点：使用 rawId 匹配)
-  const matchedNodes = allCategories.value.filter(item => realIds.includes(item.rawId));
-
-  // 3. 构建干净的节点数据，去除父级的偏移量干扰，方便做降维计算
-  const cleanNodes = matchedNodes.map(node => ({
-    rawId: node.rawId,
-    level1Id: node.level1Id,
-    // 如果父级带了 10亿 偏移量，这里将其还原
-    level2Id: node.level2Id ? (node.level2Id > 1000000000 ? node.level2Id - 1000000000 : node.level2Id) : null,
-    isL3: node.id > 2000000000,
-    isPureL2: node.id > 1000000000 && node.id <= 2000000000
-  }));
-
-  // 获取所有有效的叶子节点（用于判断是否全选）
-  const allCleanLeafNodes = allCategories.value.filter(c => c.level2Id !== undefined || c.isPureLevel2).map(node => ({
-    rawId: node.rawId,
-    level1Id: node.level1Id,
-    level2Id: node.level2Id ? (node.level2Id > 1000000000 ? node.level2Id - 1000000000 : node.level2Id) : null,
-  }));
-
-  // 4. 智能降维逻辑（防 URL 超长）
-  const groupedByLevel1 = groupBy(cleanNodes, 'level1Id');
-  for (const l1Id in groupedByLevel1) {
-    if (!l1Id || l1Id === 'undefined' || l1Id === 'null') continue;
-
-    const itemsInL1 = groupedByLevel1[l1Id];
-    const allLeafInL1 = allCleanLeafNodes.filter(c => String(c.level1Id) === l1Id);
-
-    // 如果某个 L1 下所有的叶子节点都被选中了 -> 只传 L1 ID
-    if (itemsInL1.length === allLeafInL1.length && allLeafInL1.length > 0) {
-      result.categoryLevel1Id.push(Number(l1Id));
-      continue;
-    }
-
-    const groupedByLevel2 = groupBy(itemsInL1, 'level2Id');
-    for (const l2Id in groupedByLevel2) {
-      const itemsInL2 = groupedByLevel2[l2Id];
-
-      // 没有归属 L2 的独立节点处理
-      if (!l2Id || l2Id === 'undefined' || l2Id === 'null') {
-        itemsInL2.forEach((item: any) => {
-          if (item.isL3) result.categoryLevel3Id.push(item.rawId);
-          else if (item.isPureL2) result.categoryLevel2Id.push(item.rawId);
-        });
-        continue;
-      }
-
-      const allLeafInL2 = allCleanLeafNodes.filter(c => String(c.level2Id) === l2Id);
-
-      // 如果某个 L2 下所有的叶子节点都被选中了 -> 只传 L2 ID
-      if (itemsInL2.length === allLeafInL2.length && allLeafInL2.length > 0) {
-        result.categoryLevel2Id.push(Number(l2Id));
-      } else {
-        // 零散选的叶子节点，按它的真实级别分别推入
-        itemsInL2.forEach((item: any) => {
-          if (item.isL3) result.categoryLevel3Id.push(item.rawId);
-          else if (item.isPureL2) result.categoryLevel2Id.push(item.rawId);
-        });
-      }
-    }
-  }
-
-  // 5. 处理纯父节点勾选 (兜底)
-  realIds.forEach(id => {
-    if (!cleanNodes.find(m => m.rawId === id)) {
-      const found = allCategories.value.find(c => c.rawId === id);
-      if (found) {
-        if (found.id > 2000000000) result.categoryLevel3Id.push(id);
-        else if (found.id > 1000000000) result.categoryLevel2Id.push(id);
-        else result.categoryLevel1Id.push(id);
-      }
+  // 绝不去树里查找！直接根据数值大小，放进对应的筐里
+  selectedCategories.value.forEach(id => {
+    if (id > 2000000000) {
+      result.categoryLevel3Id.push(id - 2000000000); // 属于三级
+    } else if (id > 1000000000) {
+      result.categoryLevel2Id.push(id - 1000000000); // 属于二级
+    } else {
+      result.categoryLevel1Id.push(id);              // 属于一级
     }
   });
 
-  // 6. 极致防爆去重
+  // 去重兜底
   result.categoryLevel1Id = Array.from(new Set(result.categoryLevel1Id));
   result.categoryLevel2Id = Array.from(new Set(result.categoryLevel2Id));
   result.categoryLevel3Id = Array.from(new Set(result.categoryLevel3Id));
@@ -1249,20 +1180,26 @@ const handleExportMenuClick = async ({ key }: { key: string }) => {
     let response: any
     const parsedCategoryParams = parseSelectedCategories()
 
-    const formatParam = (arr: number[], formVal: number | undefined) => {
-      if (arr && arr.length > 0) return arr.join(',')
-      return formVal ? String(formVal) : undefined
+    // 💡 只返回有内容的数组，如果为空，直接返回 undefined 丢弃该字段
+    const getArrayParam = (arr: number[], formVal: number | undefined) => {
+      if (arr && arr.length > 0) return arr;
+      if (formVal) return [formVal];
+      return undefined;
     }
 
+    // 💥 致命Bug修复：键名必须叫 categoryLevel1Id (去掉了末尾的 s !)
     const exportParams = {
-      categoryLevel1Id: formatParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
-      categoryLevel2Id: formatParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
-      categoryLevel3Id: formatParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
-      brand: searchForm.brand,
-      productCode: searchForm.productCode,
-      model: searchForm.model,
-      hasStock: searchForm.hasStock
+      categoryLevel1Id: getArrayParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
+      categoryLevel2Id: getArrayParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
+      categoryLevel3Id: getArrayParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
+
+      brand: searchForm.brand ? searchForm.brand.trim() : undefined,
+      productCode: searchForm.productCode ? searchForm.productCode.trim() : undefined,
+      model: searchForm.model ? searchForm.model.trim() : undefined,
+      hasStock: (searchForm.hasStock === true || searchForm.hasStock === false) ? searchForm.hasStock : undefined
     }
+
+    console.log('📤 最终极干净参数:', exportParams);
 
     // 执行导出请求
     switch (key) {
@@ -1272,22 +1209,34 @@ const handleExportMenuClick = async ({ key }: { key: string }) => {
       default: return
     }
 
-    // ✅ 修正后的逻辑判断
-    if (response && response.filename) {
-      const { filename, recordCount } = response
-      message.success(`导出成功！共 ${recordCount} 条记录，正在下载...`)
+    const actualData = response?.data?.message ? response.data : (response || {})
+
+    if (actualData.success === false || actualData.code === 500) {
+      message.error(`后端报错: ${actualData.message || '未知异常'}`)
+      return
+    }
+
+    const targetPath = actualData.filePath
+        || actualData.filepath
+        || actualData.filename
+        || actualData.fileName
+        || actualData.path
+        || actualData.url;
+
+    if (targetPath) {
+      const recordCount = actualData.recordCount || 0
+      message.success(`导出成功！共 ${recordCount} 条记录，正在准备下载...`)
 
       setTimeout(() => {
-        downloadExportFile(filename)
+        downloadExportFile(targetPath)
       }, 500)
     } else {
-      // 如果响应不符合预期（比如没有 filename），才报失败
-      message.error('导出失败：服务器未返回文件名')
+      message.error(`找不到文件信息！抓取到的数据: ${JSON.stringify(actualData)}`, 8)
     }
 
   } catch (error) {
     console.error('导出异常:', error)
-    message.error('导出失败，请检查网络或后端服务')
+    message.error('请求发送失败，请检查网络')
   } finally {
     loading.value = false
   }

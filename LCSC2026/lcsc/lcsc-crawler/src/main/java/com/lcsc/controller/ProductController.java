@@ -1,5 +1,6 @@
 package com.lcsc.controller;
 
+import java.util.Objects;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.lcsc.common.Result;
 import com.lcsc.entity.Product;
@@ -288,22 +289,50 @@ public class ProductController {
     }
 
     // ================ 新增：字符串转List的解析器 ================
+    // ================ 终极增强版：多形态参数解析器 ================
     private List<Integer> parseCategoryIdList(Object param) {
         if (param == null) return null;
+
+        // 情况1：前端直接传过来了 JSON 数组（如 List<Integer> 或 List<String>）
+        if (param instanceof List) {
+            List<?> list = (List<?>) param;
+            if (list.isEmpty()) return null;
+
+            return list.stream()
+                    .filter(Objects::nonNull)
+                    .map(item -> {
+                        if (item instanceof Integer) return (Integer) item;
+                        if (item instanceof Number) return ((Number) item).intValue();
+                        try {
+                            return Integer.valueOf(item.toString().trim());
+                        } catch (NumberFormatException e) {
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+        }
+
+        // 情况2：前端传过来的是逗号分隔的字符串（如 "157, 158"）
         String str = param.toString().trim();
-        if (str.isEmpty() || "undefined".equals(str)) return null;
+        if (str.isEmpty() || "undefined".equals(str) || "[]".equals(str)) return null;
+
         try {
+            // 清理可能误传的方括号，比如 "[157, 158]"
+            str = str.replace("[", "").replace("]", "");
+            if (str.trim().isEmpty()) return null;
+
             return Arrays.stream(str.split(","))
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())
                     .map(Integer::valueOf)
                     .collect(Collectors.toList());
         } catch (Exception e) {
+            // 解析失败不报错，默默忽略条件（防崩溃）
             return null;
         }
     }
     // =======================================================
-
     // --- 产品导出 API ---
 
     /**
@@ -339,7 +368,10 @@ public class ProductController {
         String brand = (String) params.get("brand");
         String productCode = (String) params.get("productCode");
         String model = (String) params.get("model");
-        Boolean hasStock = params.get("hasStock") != null ? Boolean.valueOf(params.get("hasStock").toString()) : null;
+        Boolean hasStock = null;
+        if (params.get("hasStock") != null && !params.get("hasStock").toString().trim().isEmpty()) {
+            hasStock = Boolean.valueOf(params.get("hasStock").toString());
+        }
 
         return dataExportService.exportProductsToExcel(l1Ids, l2Ids, l3Ids, brand, productCode, model, hasStock)
                 .thenApply(result -> {
@@ -369,7 +401,10 @@ public class ProductController {
         String brand = (String) params.get("brand");
         String productCode = (String) params.get("productCode");
         String model = (String) params.get("model");
-        Boolean hasStock = params.get("hasStock") != null ? Boolean.valueOf(params.get("hasStock").toString()) : null;
+        Boolean hasStock = null;
+        if (params.get("hasStock") != null && !params.get("hasStock").toString().trim().isEmpty()) {
+            hasStock = Boolean.valueOf(params.get("hasStock").toString());
+        }
 
         return dataExportService.exportProductsToCSV(l1Ids, l2Ids, l3Ids, brand, productCode, model, hasStock, null)
                 .thenApply(result -> {

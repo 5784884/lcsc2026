@@ -179,19 +179,56 @@ public class DataExportService {
         if (brand != null && !brand.trim().isEmpty()) wrapper.like(Product::getBrand, brand.trim());
         if (model != null && !model.trim().isEmpty()) wrapper.like(Product::getModel, model.trim());
 
-        // 升级为集合查询 IN
-        if (categoryLevel1Ids != null && !categoryLevel1Ids.isEmpty()) wrapper.in(Product::getCategoryLevel1Id, categoryLevel1Ids);
-        if (categoryLevel2Ids != null && !categoryLevel2Ids.isEmpty()) wrapper.in(Product::getCategoryLevel2Id, categoryLevel2Ids);
-        if (categoryLevel3Ids != null && !categoryLevel3Ids.isEmpty()) wrapper.in(Product::getCategoryLevel3Id, categoryLevel3Ids);
+        // 🌟 终极修复：使用 OR 组合不同层级的分类查询
+        boolean hasL1 = categoryLevel1Ids != null
+                && !categoryLevel1Ids.isEmpty();
+        boolean hasL2 = categoryLevel2Ids != null
+                && !categoryLevel2Ids.isEmpty();
+        boolean hasL3 = categoryLevel3Ids != null
+                && !categoryLevel3Ids.isEmpty();
 
-        if (hasStock != null) {
-            if (hasStock) wrapper.gt(Product::getTotalStockQuantity, 0);
-            else wrapper.le(Product::getTotalStockQuantity, 0);
+        if
+        (hasL1 || hasL2 || hasL3) {
+            wrapper.and(w -> {
+                boolean isFirst = true
+                        ;
+                if
+                (hasL1) {
+                    w.in(Product::getCategoryLevel1Id, categoryLevel1Ids);
+                    isFirst =
+                            false
+                    ;
+                }
+                if
+                (hasL2) {
+                    if
+                    (!isFirst) w.or();
+                    w.in(Product::getCategoryLevel2Id, categoryLevel2Ids);
+                    isFirst =
+                            false
+                    ;
+                }
+                if
+                (hasL3) {
+                    if
+                    (!isFirst) w.or();
+                    w.in(Product::getCategoryLevel3Id, categoryLevel3Ids);
+                }
+            });
+        }
+
+        if (hasStock != null
+        ) {
+            if (hasStock) wrapper.gt(Product::getTotalStockQuantity, 0
+            );
+            else wrapper.le(Product::getTotalStockQuantity, 0
+            );
         }
         wrapper.orderByDesc(Product::getLastCrawledAt);
         List<Product> list = productService.list(wrapper);
         enrichCategoryNames(list);
-        return list;
+        return
+                list;
     }
 
     private void enrichShopNoImageInfo(List<Product> products, Integer defaultShopId) {

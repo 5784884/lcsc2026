@@ -100,7 +100,7 @@ export const exportAllProductsExcel = () => {
     code: number
     message: string
     data: {
-      filename: string
+      filePath: string // ⚠️ 修复：filename 改为 filePath，与后端保持一致
       recordCount: number
       message: string
     }
@@ -108,45 +108,34 @@ export const exportAllProductsExcel = () => {
 }
 
 // 根据搜索条件导出产品到Excel
-export const exportProductsExcel = (params: {
-  categoryLevel1Id?: number
-  categoryLevel2Id?: number
-  brand?: string
-  productCode?: string
-  model?: string
-  hasStock?: boolean
-}) => {
+// 根据搜索条件导出产品到Excel
+// 根据搜索条件导出产品到Excel
+export const exportProductsExcel = (data: any) => {
+  // ⚠️ 改回直接传 data
   return request.post<{
     code: number
     message: string
     data: {
-      filename: string
+      filePath: string
       recordCount: number
       message: string
     }
-  }>('/products/export/excel', params)
+  }>('/products/export/excel', data)
 }
 
 // 导出产品到CSV
-export const exportProductsCSV = (params: {
-  categoryLevel1Id?: number
-  categoryLevel2Id?: number
-  brand?: string
-  productCode?: string
-  model?: string
-  hasStock?: boolean
-}) => {
+export const exportProductsCSV = (data: any) => {
+  // ⚠️ 改回直接传 data
   return request.post<{
     code: number
     message: string
     data: {
-      filename: string
+      filePath: string
       recordCount: number
       message: string
     }
-  }>('/products/export/csv', params)
+  }>('/products/export/csv', data)
 }
-
 // 下载导出文件
 export const downloadExportFile = (filename: string) => {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
