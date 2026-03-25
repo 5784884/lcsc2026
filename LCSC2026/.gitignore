@@ -1,29 +1,7 @@
-### IntelliJ IDEA ###
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
-
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
+/LCSC2026/lcsc/lcsc-crawler/target/
+/LCSC2026/lcsc/lcsc-frontend/dist/
+/LCSC2026/lcsc/lcsc-crawler/logs/
+*.log
+.idea/
 .vscode/
-
-### Mac OS ###
-.DS_Store
+node_modules/
