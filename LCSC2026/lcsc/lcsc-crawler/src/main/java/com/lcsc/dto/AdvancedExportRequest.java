@@ -45,6 +45,13 @@ public class AdvancedExportRequest {
      */
     private Integer stockMax;
 
+    // ================== 新增：任意满足标识 ==================
+    /**
+     * 数量区间和图片筛选任意满足（勾选为true，不勾选为false）
+     */
+    private Boolean matchAny;
+    // =======================================================
+
     /**
      * 6级价格折扣配置（百分比，必填）
      * 例如：[90, 88, 85, 82, 80, 78] 表示一级打9折，二级打88折...
@@ -102,6 +109,16 @@ public class AdvancedExportRequest {
     public void setStockMax(Integer stockMax) {
         this.stockMax = stockMax;
     }
+
+    // ================== 新增 matchAny 的 Getter 和 Setter ==================
+    public Boolean getMatchAny() {
+        return matchAny;
+    }
+
+    public void setMatchAny(Boolean matchAny) {
+        this.matchAny = matchAny;
+    }
+    // =====================================================================
 
     public List<BigDecimal> getDiscounts() {
         return discounts;

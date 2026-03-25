@@ -10,6 +10,7 @@ import com.lcsc.mapper.ShopMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -21,10 +22,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+// 🌟 性能优化：引入流式大数据处理的 SXSSFWorkbook
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 
 /**
- * 高级导出服务 - 淘宝CSV/Excel格式
+ * 高级导出服务 - 淘宝CSV/Excel格式 (大数据量性能优化版)
  */
 @Service
 public class AdvancedExportService {
@@ -37,6 +39,16 @@ public class AdvancedExportService {
 
     // 全局兜底图（当店铺也没上传无图时使用）
     private static final String GLOBAL_DEFAULT_IMAGE = "https://assets.lcsc.com/images/no-image.jpg";
+
+    // 🌟 性能优化：几十万数据的批处理大小
+    private static final int BATCH_SIZE = 1000;
+
+    // 从配置文件(或环境变量)读取两个自定义选项的名称，提供默认值兜底
+    @Value("${taobao.sku.custom-name1:选数量相符的选项}")
+    private String customSkuName1;
+
+    @Value("${taobao.sku.custom-name2:买多少个填多少件}")
+    private String customSkuName2;
 
     @Autowired
     private ProductMapper productMapper;
@@ -110,7 +122,7 @@ public class AdvancedExportService {
     }
 
     /**
-     * 生成淘宝CSV文件
+     * 生成淘宝CSV文件 (分批次处理防 OOM)
      * @param tasks 任务列表
      * @return CSV文件字节数组
      */
@@ -121,26 +133,7 @@ public class AdvancedExportService {
             return new byte[0];
         }
 
-        // 1. 查询所有产品详情
-        Set<String> productCodes = tasks.stream()
-                .map(ExportTaskItem::getProductCode)
-                .collect(Collectors.toSet());
-
-        List<Product> products = productMapper.selectList(
-                new LambdaQueryWrapper<Product>()
-                        .in(Product::getProductCode, productCodes)
-        );
-
-        // 填充自定义分类名称
-        enrichCategoryNames(products);
-
-        Map<String, Product> productMap = products.stream()
-                .collect(Collectors.toMap(Product::getProductCode, p -> p));
-
-        // 2. 查询所有图片链接
-        Map<String, Map<Integer, String>> imageLinkMap = loadImageLinks();
-
-        // 3. 查询所有店铺信息
+        // 查询所有店铺信息
         Set<Integer> shopIds = tasks.stream()
                 .map(ExportTaskItem::getShopId)
                 .collect(Collectors.toSet());
@@ -149,35 +142,54 @@ public class AdvancedExportService {
         Map<Integer, Shop> shopMap = shops.stream()
                 .collect(Collectors.toMap(Shop::getId, s -> s));
 
-        // 4. 构建CSV内容
+        // 构建CSV内容
         StringBuilder csv = new StringBuilder();
-
-        // CSV头部（第1-3行）
         appendCsvHeader(csv);
 
-        // 产品数据行
-        for (ExportTaskItem task : tasks) {
-            Product product = productMap.get(task.getProductCode());
-            if (product == null) {
-                log.warn("产品不存在: {}", task.getProductCode());
-                continue;
-            }
+        // 🌟 性能优化：将几十万的任务分批拉取数据库，不让内存爆炸
+        for (int i = 0; i < tasks.size(); i += BATCH_SIZE) {
+            List<ExportTaskItem> batchTasks = tasks.subList(i, Math.min(i + BATCH_SIZE, tasks.size()));
 
-            Shop shop = shopMap.get(task.getShopId());
-            if (shop == null) {
-                log.warn("店铺不存在: {}", task.getShopId());
-                continue;
-            }
+            Set<String> productCodes = batchTasks.stream()
+                    .map(ExportTaskItem::getProductCode)
+                    .collect(Collectors.toSet());
 
-            appendProductRow(csv, product, shop, task, imageLinkMap);
+            List<Product> products = productMapper.selectList(
+                    new LambdaQueryWrapper<Product>()
+                            .in(Product::getProductCode, productCodes)
+            );
+
+            enrichCategoryNames(products);
+            Map<String, Product> productMap = products.stream()
+                    .collect(Collectors.toMap(Product::getProductCode, p -> p));
+
+            // 按需查本批次要用的图，不再全部装载进内存
+            Set<String> neededImageNames = products.stream()
+                    .map(Product::getImageName)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            neededImageNames.add("no-image.jpg");
+            Map<String, Map<Integer, String>> imageLinkMap = loadImageLinksByNames(neededImageNames);
+
+            for (ExportTaskItem task : batchTasks) {
+                Product product = productMap.get(task.getProductCode());
+                if (product == null) {
+                    continue;
+                }
+                Shop shop = shopMap.get(task.getShopId());
+                if (shop == null) {
+                    continue;
+                }
+                appendProductRow(csv, product, shop, task, imageLinkMap);
+            }
         }
 
         log.info("淘宝CSV文件生成完成");
-        return csv.toString().getBytes(StandardCharsets.UTF_8); // 注意：淘宝助理可能需要 GBK，视具体情况调整
+        return csv.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     /**
-     * 生成淘宝Excel文件
+     * 生成淘宝Excel文件 (SXSSFWorkbook 流式写入防 OOM)
      * @param tasks 任务列表
      * @return Excel文件字节数组
      */
@@ -188,26 +200,7 @@ public class AdvancedExportService {
             return new byte[0];
         }
 
-        // 1. 查询所有产品详情
-        Set<String> productCodes = tasks.stream()
-                .map(ExportTaskItem::getProductCode)
-                .collect(Collectors.toSet());
-
-        List<Product> products = productMapper.selectList(
-                new LambdaQueryWrapper<Product>()
-                        .in(Product::getProductCode, productCodes)
-        );
-
-        // 填充自定义分类名称
-        enrichCategoryNames(products);
-
-        Map<String, Product> productMap = products.stream()
-                .collect(Collectors.toMap(Product::getProductCode, p -> p));
-
-        // 2. 查询所有图片链接
-        Map<String, Map<Integer, String>> imageLinkMap = loadImageLinks();
-
-        // 3. 查询所有店铺信息
+        // 查询所有店铺信息
         Set<Integer> shopIds = tasks.stream()
                 .map(ExportTaskItem::getShopId)
                 .collect(Collectors.toSet());
@@ -216,39 +209,63 @@ public class AdvancedExportService {
         Map<Integer, Shop> shopMap = shops.stream()
                 .collect(Collectors.toMap(Shop::getId, s -> s));
 
-        // 4. 创建Excel工作簿
-        try (Workbook workbook = new XSSFWorkbook();
+        // 🌟 性能优化：换用 SXSSFWorkbook，内存只保留最新 1000 行，旧行自动刷盘！
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(1000);
              ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
 
+            workbook.setCompressTempFiles(true); // 压缩硬盘产生的临时文件
             Sheet sheet = workbook.createSheet("淘宝导入");
 
             // 创建表头（第1-3行）
             createExcelHeader(sheet);
 
-            // 创建产品数据行（从第4行开始，rowIndex=3）
             int rowIndex = 3;
-            for (ExportTaskItem task : tasks) {
-                Product product = productMap.get(task.getProductCode());
-                if (product == null) {
-                    log.warn("产品不存在: {}", task.getProductCode());
-                    continue;
-                }
 
-                Shop shop = shopMap.get(task.getShopId());
-                if (shop == null) {
-                    log.warn("店铺不存在: {}", task.getShopId());
-                    continue;
-                }
+            // 🌟 性能优化：分批次查询，不撑爆数据库连接池和内存
+            for (int i = 0; i < tasks.size(); i += BATCH_SIZE) {
+                List<ExportTaskItem> batchTasks = tasks.subList(i, Math.min(i + BATCH_SIZE, tasks.size()));
 
-                createProductRow(sheet, rowIndex++, product, shop, task, imageLinkMap);
+                Set<String> productCodes = batchTasks.stream()
+                        .map(ExportTaskItem::getProductCode)
+                        .collect(Collectors.toSet());
+
+                List<Product> products = productMapper.selectList(
+                        new LambdaQueryWrapper<Product>()
+                                .in(Product::getProductCode, productCodes)
+                );
+
+                enrichCategoryNames(products);
+                Map<String, Product> productMap = products.stream()
+                        .collect(Collectors.toMap(Product::getProductCode, p -> p));
+
+                // 同样按需查图片
+                Set<String> neededImageNames = products.stream()
+                        .map(Product::getImageName)
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toSet());
+                neededImageNames.add("no-image.jpg");
+                Map<String, Map<Integer, String>> imageLinkMap = loadImageLinksByNames(neededImageNames);
+
+                for (ExportTaskItem task : batchTasks) {
+                    Product product = productMap.get(task.getProductCode());
+                    if (product == null) {
+                        continue;
+                    }
+                    Shop shop = shopMap.get(task.getShopId());
+                    if (shop == null) {
+                        continue;
+                    }
+                    createProductRow(sheet, rowIndex++, product, shop, task, imageLinkMap);
+                }
             }
 
-            // 自动调整列宽（仅对前20列，避免性能问题）
-            for(int i=0; i<20; i++) {
-                sheet.autoSizeColumn(i);
+            // 🌟 性能优化：取消极度耗时的 sheet.autoSizeColumn(i)，改为定宽写入
+            for (int i = 0; i < 20; i++) {
+                sheet.setColumnWidth(i, 4000);
             }
 
             workbook.write(outputStream);
+            workbook.dispose(); // 清理写入期间创建的临时硬盘文件
             log.info("淘宝Excel文件生成完成");
             return outputStream.toByteArray();
         }
@@ -292,7 +309,7 @@ public class AdvancedExportService {
         // 1. cid: 固定值
         row.createCell(col++).setCellValue(FIXED_CID);
 
-        // 2. seller_cids: 店铺分类码（优先使用sellerCategoryId，fallback到shop.getId()）
+        // 2. seller_cids: 店铺分类码
         String sellerCids = shop.getSellerCategoryId() != null && !shop.getSellerCategoryId().isEmpty()
                 ? shop.getSellerCategoryId()
                 : String.valueOf(shop.getId());
@@ -311,9 +328,10 @@ public class AdvancedExportService {
         // 8. auction_increment: 空
         col++;
 
-        // 9. num: (阶梯级数+2)*1000000
+        // 9. num: (阶梯数 * 真实库存) + 2个自定义SKU(固定1)
         int ladderCount = getLadderCount(product);
-        int num = (ladderCount + 2) * 1000000;
+        int stockQty = product.getTotalStockQuantity() != null ? product.getTotalStockQuantity() : 0;
+        int num = (ladderCount * stockQty) + 2;
         row.createCell(col++).setCellValue(num);
 
         // 10-11. valid_thru, freight_payer: 空
@@ -340,7 +358,7 @@ public class AdvancedExportService {
         // 18-19. has_showcase, list_time: 空
         col += 2;
 
-        // 20. description: ✅ 格式已更新为与产品管理表一致
+        // 20. description: 格式已更新为与产品管理表一致
         row.createCell(col++).setCellValue(buildDescription(product));
 
         // 21. cateProps: 选项编号组合
@@ -358,7 +376,7 @@ public class AdvancedExportService {
         // 29. video: 空
         col++;
 
-        // 30. skuProps: 价格:1000000::选项编号组合
+        // 30. skuProps: 调用真实库存，自定义选为固定1
         row.createCell(col++).setCellValue(buildSkuProps(product, task.getDiscounts(), ladderCount));
 
         // 31-32. inputPids, inputValues: 空（2个字段）
@@ -386,7 +404,7 @@ public class AdvancedExportService {
         // 49-58. item_size~cpv_memo: 空（10个字段）
         col += 10;
 
-        // 59. input_custom_cpv: 自定义属性值（选项编号:买X-Y个选这个）
+        // 59. input_custom_cpv: 自定义属性值（选项编号:买X-Y个选这个），由环境变量提供后两个
         row.createCell(col++).setCellValue(buildPropAlias(product, ladderCount));
 
         // 60-62. qualification~o2o_bind_service: 空（3个字段）
@@ -413,13 +431,13 @@ public class AdvancedExportService {
     /**
      * 根据请求条件查询产品
      */
-    /**
-     * 根据请求条件查询产品
-     */
     private List<Product> queryProductsByRequest(AdvancedExportRequest request) {
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
 
-        // 1. 分类：解析前端传来的带前缀 ID (10亿级为L2, 20亿级为L3, 否则为L1)
+        // 🌟 性能优化：限制查询字段，排除可能长达几万字符的 description 等，防止查询 2 万条时前端卡死！
+        wrapper.select(Product::getProductCode, Product::getModel, Product::getBrand);
+
+        // 1. 分类
         if (request.getCategoryIds() != null && !request.getCategoryIds().isEmpty()) {
             List<Integer> l1Ids = new ArrayList<>();
             List<Integer> l2Ids = new ArrayList<>();
@@ -427,65 +445,90 @@ public class AdvancedExportService {
 
             for (Integer rawId : request.getCategoryIds()) {
                 if (rawId > 2000000000) {
-                    l3Ids.add(rawId - 2000000000); // 提取三级分类真实ID
+                    l3Ids.add(rawId - 2000000000);
                 } else if (rawId > 1000000000) {
-                    l2Ids.add(rawId - 1000000000); // 提取二级分类真实ID
+                    l2Ids.add(rawId - 1000000000);
                 } else {
-                    l1Ids.add(rawId);              // 一级分类真实ID
+                    l1Ids.add(rawId);
                 }
             }
 
-            // 组装精准的层级查询条件
+            // ==== 🌟 核心终极修复：跨级别混选查询逻辑 ====
+            // 必须独立使用 or() 连接各个分类条件，消除层级强绑定
             wrapper.and(w -> {
-                boolean hasCondition = false;
                 if (!l1Ids.isEmpty()) {
                     w.in(Product::getCategoryLevel1Id, l1Ids);
-                    hasCondition = true;
                 }
                 if (!l2Ids.isEmpty()) {
-                    if (hasCondition) w.or();
+                    if (!l1Ids.isEmpty()) { w.or(); }
                     w.in(Product::getCategoryLevel2Id, l2Ids);
-                    hasCondition = true;
                 }
                 if (!l3Ids.isEmpty()) {
-                    if (hasCondition) w.or();
+                    if (!l1Ids.isEmpty() || !l2Ids.isEmpty()) { w.or(); }
                     w.in(Product::getCategoryLevel3Id, l3Ids);
                 }
             });
+            // ==================================================
         }
 
-        // 2. 品牌：品牌多选也需要使用 in
+        // 2. 品牌
         if (request.getBrands() != null && !request.getBrands().isEmpty()) {
             wrapper.in(Product::getBrand, request.getBrands());
         }
 
-        // 3. 图片：叠加 AND
-        if (request.getHasImage() != null) {
-            if (request.getHasImage()) {
-                wrapper.and(w -> w.isNotNull(Product::getProductImageUrlBig).ne(Product::getProductImageUrlBig, ""));
-            } else {
-                wrapper.and(w -> w.isNull(Product::getProductImageUrlBig).or().eq(Product::getProductImageUrlBig, ""));
+        // 3. 智能路由 (任意满足 OR / 叠加 AND)
+        boolean hasStockCondition = (request.getStockMin() != null || request.getStockMax() != null);
+        boolean hasImgCondition = (request.getHasImage() != null);
+
+        if (Boolean.TRUE.equals(request.getMatchAny()) && hasStockCondition && hasImgCondition) {
+            wrapper.and(w -> {
+                w.nested(stockW -> {
+                    if (request.getStockMin() != null) stockW.ge(Product::getTotalStockQuantity, request.getStockMin());
+                    if (request.getStockMax() != null) stockW.le(Product::getTotalStockQuantity, request.getStockMax());
+                }).or().nested(imgW -> {
+                    if (request.getHasImage()) {
+                        imgW.isNotNull(Product::getProductImageUrlBig).ne(Product::getProductImageUrlBig, "");
+                    } else {
+                        imgW.and(iw2 -> iw2.isNull(Product::getProductImageUrlBig).or().eq(Product::getProductImageUrlBig, ""));
+                    }
+                });
+            });
+        } else {
+            if (request.getStockMin() != null) wrapper.ge(Product::getTotalStockQuantity, request.getStockMin());
+            if (request.getStockMax() != null) wrapper.le(Product::getTotalStockQuantity, request.getStockMax());
+
+            if (request.getHasImage() != null) {
+                if (request.getHasImage()) {
+                    wrapper.isNotNull(Product::getProductImageUrlBig).ne(Product::getProductImageUrlBig, "");
+                } else {
+                    wrapper.and(w -> w.isNull(Product::getProductImageUrlBig).or().eq(Product::getProductImageUrlBig, ""));
+                }
             }
         }
 
-        // 4. 库存：叠加 AND
-        if (request.getStockMin() != null) wrapper.ge(Product::getTotalStockQuantity, request.getStockMin());
-        if (request.getStockMax() != null) wrapper.le(Product::getTotalStockQuantity, request.getStockMax());
+        // 🌟 性能优化：直接让数据库排序，减轻前端2万数据排序卡顿
+        wrapper.orderByAsc(Product::getProductCode);
 
         return productMapper.selectList(wrapper);
     }
-    /**
-     * 加载所有图片链接（image_name -> shop_id -> image_link）
-     */
-    private Map<String, Map<Integer, String>> loadImageLinks() {
-        List<ImageLink> links = imageLinkMapper.selectList(null);
-        Map<String, Map<Integer, String>> map = new HashMap<>();
 
+    /**
+     * 按名称按需加载图片链接
+     */
+    private Map<String, Map<Integer, String>> loadImageLinksByNames(Set<String> imageNames) {
+        if (imageNames == null || imageNames.isEmpty()) {
+            return new HashMap<>();
+        }
+
+        List<ImageLink> links = imageLinkMapper.selectList(
+                new LambdaQueryWrapper<ImageLink>().in(ImageLink::getImageName, imageNames)
+        );
+
+        Map<String, Map<Integer, String>> map = new HashMap<>();
         for (ImageLink link : links) {
             map.computeIfAbsent(link.getImageName(), k -> new HashMap<>())
                     .put(link.getShopId(), link.getImageLink());
         }
-
         return map;
     }
 
@@ -536,9 +579,10 @@ public class AdvancedExportService {
         // 8. auction_increment: 空
         csv.append(",");
 
-        // 9. num: (阶梯级数+2)*1000000
+        // 9. num: (阶梯数 * 真实库存) + 2个自定义SKU(固定1)
         int ladderCount = getLadderCount(product);
-        int num = (ladderCount + 2) * 1000000;
+        int stockQty = product.getTotalStockQuantity() != null ? product.getTotalStockQuantity() : 0;
+        int num = (ladderCount * stockQty) + 2;
         csv.append(num).append(",");
 
         // 10-19. valid_thru~list_time
@@ -565,7 +609,7 @@ public class AdvancedExportService {
         // 29. video: 空
         csv.append(",");
 
-        // 30. skuProps
+        // 30. skuProps: 调用真实库存，自定义选为固定1
         String skuProps = buildSkuProps(product, task.getDiscounts(), ladderCount);
         csv.append(skuProps).append(",");
 
@@ -594,7 +638,7 @@ public class AdvancedExportService {
         // 49-58. item_size~cpv_memo: 空
         csv.append(",,,,,,,,,,");
 
-        // 59. input_custom_cpv
+        // 59. input_custom_cpv: 由环境变量提供后两个
         String inputCustomCpv = buildPropAlias(product, ladderCount);
         csv.append(escapeCsv(inputCustomCpv)).append(",");
 
@@ -768,6 +812,8 @@ public class AdvancedExportService {
         StringBuilder props = new StringBuilder();
         int totalOptions = ladderCount + 2;
 
+        int stockQty = product.getTotalStockQuantity() != null ? product.getTotalStockQuantity() : 0;
+
         if (discounts == null) {
             discounts = new ArrayList<>();
         }
@@ -791,8 +837,12 @@ public class AdvancedExportService {
                     .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP);
             BigDecimal finalPrice = price.multiply(discount).setScale(5, RoundingMode.HALF_UP);
 
+            int skuStock = (i < ladderCount) ? stockQty : 1;
+
             props.append(finalPrice.toString())
-                    .append(":1000000::")
+                    .append(":")
+                    .append(skuStock)
+                    .append("::")
                     .append(OPTION_CODE_PREFIX)
                     .append(i + 1)
                     .append(";");
@@ -810,9 +860,9 @@ public class AdvancedExportService {
             String text;
 
             if (i == totalOptions - 2) {
-                text = "选数量相符的选项";
+                text = customSkuName1;
             } else if (i == totalOptions - 1) {
-                text = "买多少个填多少件";
+                text = customSkuName2;
             } else if (i < ladderCount - 1) {
                 int currentQty = getLadderQuantityByIndex(product, i + 1);
                 int nextQty = getLadderQuantityByIndex(product, i + 2);

@@ -5,14 +5,13 @@ import { api } from '@/utils/request'
  */
 export interface AdvancedExportRequest {
   shopId: number                    // 选择的店铺ID（单选，必填）
-  categoryLevel1Id?: number         // 一级分类ID（可选）
-  categoryLevel2Id?: number         // 二级分类ID（可选）
-  categoryLevel3Id?: number         // 三级分类ID（可选）
-  brand?: string                    // 品牌名称（可选，单选）
+  categoryIds?: number[]            // 分类ID数组（支持多选）
+  brands?: string[]                 // 品牌名称数组（支持多选）
   hasImage?: boolean                // 是否有图片（可选：true/false/null）
   stockMin?: number                 // 库存最小值（可选）
   stockMax?: number                 // 库存最大值（可选）
-  discounts: number[]               // 6级价格折扣配置（百分比，必填，例如：[90, 88, 85, 82, 80, 78]）
+  matchAny?: boolean                // 任意满足标识
+  discounts: number[]               // 6级价格折扣配置
 }
 
 /**
@@ -33,13 +32,12 @@ export interface ExportTaskItem {
  */
 export interface AddTaskRequest {
   shopId: number
-  categoryLevel1Id?: number
-  categoryLevel2Id?: number
-  categoryLevel3Id?: number
-  brand?: string
+  categoryIds?: number[]
+  brands?: string[]
   hasImage?: boolean
   stockMin?: number
   stockMax?: number
+  matchAny?: boolean
   discounts: number[]
   currentTasks: ExportTaskItem[]    // 当前任务列表
 }
@@ -52,17 +50,25 @@ export const addToTaskList = (request: AddTaskRequest): Promise<ExportTaskItem[]
 }
 
 /**
- * 导出任务列表为淘宝Excel格式
+ * 导出任务列表为淘宝Excel格式 (支持超过 N 条自动打ZIP包)
+ * @param tasks 任务列表
+ * @param splitSize 每个表格切分的条数 (默认1000)
  */
-export const exportTaobaoExcel = async (tasks: ExportTaskItem[]): Promise<void> => {
-  const response = await api.post('/export/export-taobao-excel', tasks, {
+export const exportTaobaoExcel = async (tasks: ExportTaskItem[], splitSize: number = 1000): Promise<void> => {
+  // 1. 将 splitSize 拼接到 URL 后面传给后端
+  const response = await api.post(`/export/export-taobao-excel?splitSize=${splitSize}`, tasks, {
     responseType: 'blob'
   })
 
+  // 2. 动态判断后端回传的是单个 Excel 还是 ZIP 压缩包
+  const isZip = tasks.length > splitSize
+  const mimeType = isZip
+      ? 'application/zip'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  const extension = isZip ? '.zip' : '.xlsx'
+
   // 创建下载链接
-  const blob = new Blob([response as any], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  })
+  const blob = new Blob([response as any], { type: mimeType })
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -70,8 +76,8 @@ export const exportTaobaoExcel = async (tasks: ExportTaskItem[]): Promise<void> 
   // 生成文件名
   const now = new Date()
   const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '') + '_' +
-                  now.toTimeString().slice(0, 8).replace(/:/g, '')
-  link.download = `${dateStr}.xlsx`
+      now.toTimeString().slice(0, 8).replace(/:/g, '')
+  link.download = `${dateStr}_高级导出${extension}`
 
   document.body.appendChild(link)
   link.click()

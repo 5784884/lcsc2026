@@ -81,12 +81,13 @@
                   v-model:value="filterForm.brands"
                   mode="multiple"
                   placeholder="选择品牌(可多选)"
-                  :options="brandOptions"
                   :max-tag-count="3"
                   show-search
-                  option-filter-prop="label"
                   allow-clear
               >
+                <a-select-option v-for="item in brandOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
@@ -123,6 +124,21 @@
                     :min="0"
                     style="width: 120px"
                 />
+              </a-space>
+            </a-form-item>
+
+            <a-form-item>
+              <a-space>
+                <a-checkbox v-model:checked="filterForm.matchAny">
+                  <a-tooltip title="勾选后，满足库存或图片其中一项即可查出">
+                    数量/图片 任意满足
+                  </a-tooltip>
+                </a-checkbox>
+                <a-select v-model:value="sortOrder" style="width: 150px">
+                  <a-select-option value="default">默认排序</a-select-option>
+                  <a-select-option value="asc">产品编号 (正序)</a-select-option>
+                  <a-select-option value="desc">产品编号 (倒序)</a-select-option>
+                </a-select>
               </a-space>
             </a-form-item>
           </a-col>
@@ -166,6 +182,17 @@
       <template #extra>
         <a-space>
           <span>共 {{ taskList.length }} 个产品</span>
+
+          <span style="color: #666; margin-left: 12px;">每个表格:</span>
+          <a-input-number
+              v-model:value="splitSize"
+              :min="1"
+              :max="1000000"
+              placeholder="默认全部"
+              style="width: 100px;"
+          />
+          <span style="color: #666; margin-right: 12px;">条</span>
+
           <a-button
               type="primary"
               danger
@@ -182,7 +209,6 @@
           </a-button>
         </a-space>
       </template>
-
       <a-table
           :columns="taskColumns"
           :data-source="taskList"
@@ -264,6 +290,7 @@ import {
 import { getAllShops } from '@/api/shop'
 import { getAllCategories, getAllBrands } from '@/api/product'
 import { addToTaskList, exportTaobaoExcel, type ExportTaskItem } from '@/api/export'
+
 import type { Shop } from '@/types'
 import CategoryTreeSelector from '@/components/CategoryTreeSelector.vue'
 
@@ -276,6 +303,7 @@ interface FilterFormState {
   stockMin: number | undefined
   stockMax: number | undefined
   discounts: number[]
+  matchAny: boolean
 }
 
 interface ExportScheme {
@@ -294,8 +322,10 @@ const filterForm = reactive<FilterFormState>({
   hasImage: undefined,
   stockMin: undefined,
   stockMax: undefined,
-  discounts: [90, 88, 85, 82, 80, 78]
+  discounts: [90, 88, 85, 82, 80, 78],
+  matchAny: false
 })
+const sortOrder = ref('default')
 
 const schemeList = ref<ExportScheme[]>([])
 const currentSchemeId = ref<string | undefined>(undefined)
@@ -310,6 +340,9 @@ const categoryTreeSelectorRef = ref<InstanceType<typeof CategoryTreeSelector>>()
 const taskList = ref<ExportTaskItem[]>([])
 const addLoading = ref(false)
 const exportLoading = ref(false)
+
+// 🌟 修改点 2：默认值设为 undefined，这样就能显示 placeholder="默认全部"
+const splitSize = ref<number | undefined>(undefined)
 
 const shopOptions = ref<{ label: string; value: number }[]>([])
 const brandOptions = ref<{ label: string; value: string }[]>([])
@@ -366,7 +399,8 @@ const handleSaveScheme = () => {
     hasImage: filterForm.hasImage,
     stockMin: filterForm.stockMin,
     stockMax: filterForm.stockMax,
-    discounts: [...filterForm.discounts]
+    discounts: [...filterForm.discounts],
+    matchAny: filterForm.matchAny
   }
 
   const newScheme: ExportScheme = {
@@ -399,6 +433,7 @@ const handleApplyScheme = (schemeId: string) => {
   filterForm.stockMin = scheme.config.stockMin
   filterForm.stockMax = scheme.config.stockMax
   filterForm.discounts = [...scheme.config.discounts]
+  filterForm.matchAny = scheme.config.matchAny || false
 
   selectedCategories.value = [...scheme.config.categoryIds]
 
@@ -443,8 +478,6 @@ const loadAllCategoriesForSelector = async () => {
     const data = await getAllCategories()
     if (data && data.length > 0) {
       let mappedData = data.map((item: any) => {
-
-        // 🌟 终极精准提取：绝对不串级！优先拿自己的 id，如果没有再按级别拿专属字段
         let trueId = item.id;
         if (!trueId) {
           if (item.categoryLevel === 'level3') {
@@ -455,8 +488,6 @@ const loadAllCategoriesForSelector = async () => {
             trueId = item.categoryLevel1Id;
           }
         }
-
-        // 根据级别加上后端的偏移量 (20亿 / 10亿)
         let offsetId = trueId;
         if (item.categoryLevel === 'level3') {
           offsetId = trueId + 2000000000;
@@ -465,13 +496,10 @@ const loadAllCategoriesForSelector = async () => {
         }
 
         return {
-          id: offsetId, // 传给 Tree 组件和后端的带偏移量 ID
-          rawId: trueId, // 保留真实的数据库 ID 备用
+          id: offsetId,
+          rawId: trueId,
           name: item.categoryName || item.categoryLevel3Name || item.categoryLevel2Name,
-
-          // 必须给 level2Id 也加上 10 亿的偏移量，树组件才能把 L3 挂在 L2 下面！
           level2Id: item.categoryLevel2Id ? item.categoryLevel2Id + 1000000000 : null,
-
           level2Name: item.categoryLevel2Name,
           level1Id: item.categoryLevel1Id,
           level1Name: item.categoryLevel1Name || `L1-${item.categoryLevel1Id}`,
@@ -480,7 +508,6 @@ const loadAllCategoriesForSelector = async () => {
         };
       })
 
-      // 下面的排序逻辑保持不变...
       mappedData.sort((a, b) => {
         const l1A = String(a.level1Name || '')
         const l1B = String(b.level1Name || '')
@@ -506,16 +533,26 @@ const loadAllCategoriesForSelector = async () => {
 
 const loadBrands = async () => {
   try {
-    const brands = await getAllBrands()
-    brandOptions.value = brands.map((brand: string) => ({
-      label: brand,
-      value: brand
-    }))
+    const res: any = await getAllBrands()
+
+    // 暴力提取数组：不管后端包了多少层壳，只要找到数组就拿出来
+    let list: any[] = []
+    if (Array.isArray(res)) list = res
+    else if (res?.data && Array.isArray(res.data)) list = res.data
+    else if (res?.data?.data && Array.isArray(res.data.data)) list = res.data.data
+
+    // 安全地将字符串数组转换为对象数组
+    brandOptions.value = list
+        .filter(item => item !== null && item !== undefined && item !== '') // 踢掉空数据
+        .map(item => ({
+          label: String(item),
+          value: String(item)
+        }))
+
   } catch (error) {
-    message.error('加载品牌列表失败')
+    console.error('品牌加载失败，但不影响页面运行:', error)
   }
 }
-
 const handleOpenCategorySelector = async () => {
   if (allCategories.value.length === 0) {
     await loadAllCategoriesForSelector()
@@ -556,21 +593,34 @@ const handleAddTask = async () => {
 
   addLoading.value = true
   try {
-    // 💡 直接发送包含前缀（10亿/20亿）的原始ID数组
     const updatedTasks = await addToTaskList({
       shopId: filterForm.shopId!,
-      categoryIds: filterForm.categoryIds, // 不再调用前端清理方法，保留分类层级标识
+      categoryIds: filterForm.categoryIds,
       brands: filterForm.brands,
       hasImage: filterForm.hasImage,
       stockMin: filterForm.stockMin,
       stockMax: filterForm.stockMax,
       discounts: filterForm.discounts,
+      matchAny: filterForm.matchAny,
       currentTasks: taskList.value
     })
 
+    // 👇 前端进行正序/倒序排列
+    if (sortOrder.value !== 'default') {
+      updatedTasks.sort((a, b) => {
+        const codeA = a.productCode || ''
+        const codeB = b.productCode || ''
+        if (sortOrder.value === 'asc') {
+          return codeA.localeCompare(codeB, 'en', { numeric: true })
+        } else {
+          return codeB.localeCompare(codeA, 'en', { numeric: true })
+        }
+      })
+    }
+
     const addedCount = updatedTasks.length - taskList.value.length
     taskList.value = updatedTasks
-    message.success(`成功添加 ${addedCount} 个产品到任务列表（已自动去重）`)
+    message.success(`成功添加 ${addedCount} 个产品到任务列表`)
   } catch (error: any) {
     message.error('添加任务失败: ' + (error.message || '未知错误'))
   } finally {
@@ -585,7 +635,10 @@ const handleExport = async () => {
   }
   exportLoading.value = true
   try {
-    await exportTaobaoExcel(taskList.value)
+    // 🌟 修改点 3：如果没填，默认使用当前任务总数（即不分表，一次全导出来）
+    const actualSplitSize = splitSize.value || taskList.value.length
+
+    await exportTaobaoExcel(taskList.value, actualSplitSize)
     message.success('导出成功')
   } catch (error: any) {
     message.error('导出失败: ' + (error.message || '未知错误'))
@@ -601,6 +654,8 @@ const handleResetFilter = () => {
   filterForm.hasImage = undefined
   filterForm.stockMin = undefined
   filterForm.stockMax = undefined
+  filterForm.matchAny = false
+  sortOrder.value = 'default'
   filterForm.discounts = [90, 88, 85, 82, 80, 78]
   currentSchemeId.value = undefined
 }

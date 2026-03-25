@@ -54,9 +54,11 @@ services:
       - "8080:8080"
     # 新增：环境变量配置，按需修改等号后面的数字即可
     environment:
+      # 是否彻底关闭图片下载 (false=关闭, true=开启)
+      - CRAWLER_ENABLE_IMAGE_DOWNLOAD=false
       # --- 主爬虫控制 ---
       # 爬虫主线程数 (控制同时处理的任务数)
-      - CRAWLER_THREADS=30
+      - CRAWLER_THREADS=5
       # 每次请求接口的基础间隔 (毫秒，越大越不容易被封IP)
       - CRAWLER_DELAY=2000
       # 遇到错误时的最大重试次数

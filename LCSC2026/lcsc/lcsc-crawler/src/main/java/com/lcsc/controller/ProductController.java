@@ -114,24 +114,28 @@ public class ProductController {
     // --- 产品管理 API ---
 
     @GetMapping("/products/page")
-    public Result<Map<String, Object>> getProductPage(
-            @RequestParam(defaultValue = "1") Integer current,
-            @RequestParam(defaultValue = "20") Integer size,
-            @RequestParam(required = false) String productCode,
-            @RequestParam(required = false) String brand,
-            @RequestParam(required = false) String model,
-            @RequestParam(required = false) String packageName,
-            @RequestParam(required = false) List<Integer> categoryLevel1Id,
-            @RequestParam(required = false) List<Integer> categoryLevel2Id,
-            @RequestParam(required = false) List<Integer> categoryLevel3Id,
-            @RequestParam(required = false) Boolean hasStock
+    public Result<Map<String, Object>> getProductPage( // <-- 修复了 public Result 的空格
+                                                       @RequestParam(defaultValue = "1") Integer current,
+                                                       @RequestParam(defaultValue = "20") Integer size,
+                                                       @RequestParam(required = false) String productCode,
+                                                       @RequestParam(required = false) String brand,
+                                                       @RequestParam(required = false) String model,
+                                                       @RequestParam(required = false) String packageName,
+                                                       @RequestParam(required = false) List<Integer> categoryLevel1Id,
+                                                       @RequestParam(required = false) List<Integer> categoryLevel2Id,
+                                                       @RequestParam(required = false) List<Integer> categoryLevel3Id,
+                                                       // === 修改这里 ===
+                                                       @RequestParam(required = false) Boolean hasImage,
+                                                       @RequestParam(required = false) Integer minStock,
+                                                       @RequestParam(required = false) Integer maxStock,
+                                                       @RequestParam(required = false) Boolean matchAny// <--- 新增
     ) {
+        // === 调用也要跟着加参数 ===
         IPage<Product> result = productService.getProductPage(current, size, productCode, brand,
                 model, packageName, categoryLevel1Id,
-                categoryLevel2Id, categoryLevel3Id, hasStock);
+                categoryLevel2Id, categoryLevel3Id, hasImage, minStock, maxStock, matchAny); // <-- 补上了 matchAny 参数
         return Result.page(result.getRecords(), result.getTotal(), current.longValue(), size.longValue());
     }
-
     @GetMapping("/products/{id}")
     public Result<Product> getProductById(@PathVariable Long id) {
         Product product = productService.getById(id);
@@ -368,12 +372,27 @@ public class ProductController {
         String brand = (String) params.get("brand");
         String productCode = (String) params.get("productCode");
         String model = (String) params.get("model");
-        Boolean hasStock = null;
-        if (params.get("hasStock") != null && !params.get("hasStock").toString().trim().isEmpty()) {
-            hasStock = Boolean.valueOf(params.get("hasStock").toString());
+
+        Boolean hasImage = null;
+        if (params.get("hasImage") != null && !params.get("hasImage").toString().trim().isEmpty()) {
+            hasImage = Boolean.valueOf(params.get("hasImage").toString());
+        }
+        Integer minStock = null;
+        if (params.get("minStock") != null && !params.get("minStock").toString().trim().isEmpty()) {
+            minStock = Integer.valueOf(params.get("minStock").toString());
+        }
+        Integer maxStock = null;
+        if (params.get("maxStock") != null && !params.get("maxStock").toString().trim().isEmpty()) {
+            maxStock = Integer.valueOf(params.get("maxStock").toString());
+        }
+        // --- 新增解析 matchAny ---
+        Boolean matchAny = false;
+        if (params.get("matchAny") != null && !params.get("matchAny").toString().trim().isEmpty()) {
+            matchAny = Boolean.valueOf(params.get("matchAny").toString());
         }
 
-        return dataExportService.exportProductsToExcel(l1Ids, l2Ids, l3Ids, brand, productCode, model, hasStock)
+        // 💥 修复这里：把原来的 hasStock 换成了 hasImage, minStock, maxStock，并加上了 matchAny 和 null (shopId)
+        return dataExportService.exportProductsToExcel(l1Ids, l2Ids, l3Ids, brand, productCode, model, hasImage, minStock, maxStock, matchAny, null) // <-- 补上了 null 参数
                 .thenApply(result -> {
                     if (result.isSuccess()) {
                         Map<String, Object> data = new HashMap<>();
@@ -401,12 +420,27 @@ public class ProductController {
         String brand = (String) params.get("brand");
         String productCode = (String) params.get("productCode");
         String model = (String) params.get("model");
-        Boolean hasStock = null;
-        if (params.get("hasStock") != null && !params.get("hasStock").toString().trim().isEmpty()) {
-            hasStock = Boolean.valueOf(params.get("hasStock").toString());
-        }
 
-        return dataExportService.exportProductsToCSV(l1Ids, l2Ids, l3Ids, brand, productCode, model, hasStock, null)
+        // 💥 修复这里：补上了缺失的声明
+        Boolean hasImage = null;
+        if (params.get("hasImage") != null && !params.get("hasImage").toString().trim().isEmpty()) {
+            hasImage = Boolean.valueOf(params.get("hasImage").toString());
+        }
+        Integer minStock = null;
+        if (params.get("minStock") != null && !params.get("minStock").toString().trim().isEmpty()) {
+            minStock = Integer.valueOf(params.get("minStock").toString());
+        }
+        Integer maxStock = null;
+        if (params.get("maxStock") != null && !params.get("maxStock").toString().trim().isEmpty()) {
+            maxStock = Integer.valueOf(params.get("maxStock").toString());
+        }
+// --- 新增解析 matchAny ---
+        Boolean matchAny = false;
+        if (params.get("matchAny") != null && !params.get("matchAny").toString().trim().isEmpty()) {
+            matchAny = Boolean.valueOf(params.get("matchAny").toString());
+        }
+        // 💥 修复这里：把原来的 hasStock 换成了 hasImage, minStock, maxStock，并加上了 matchAny 和 null (shopId)
+        return dataExportService.exportProductsToCSV(l1Ids, l2Ids, l3Ids, brand, productCode, model, hasImage, minStock, maxStock, matchAny, null) // <-- 补上了 null 参数
                 .thenApply(result -> {
                     if (result.isSuccess()) {
                         Map<String, Object> data = new HashMap<>();
@@ -421,7 +455,6 @@ public class ProductController {
     }
 
     /**
-     * 下载导出的文件 (终极修复版)
      */
     @GetMapping("/products/export/download/{filename:.+}")
     public ResponseEntity<Resource> downloadExportFile(@PathVariable String filename) {

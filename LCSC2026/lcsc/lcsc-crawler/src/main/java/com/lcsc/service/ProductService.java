@@ -30,49 +30,91 @@ public class ProductService extends ServiceImpl<ProductMapper, Product> {
     /**
      * 全参数分页查询（完美支持多层级、多选、OR查询）
      */
-    public IPage<Product> getProductPage(int current, int size, String productCode, String brand,
+    public IPage<Product> getProductPage(int current, int
+                                                 size, String productCode, String brand,
                                          String model, String packageName,
                                          List<Integer> categoryLevel1Id,
                                          List<Integer> categoryLevel2Id,
                                          List<Integer> categoryLevel3Id,
-                                         Boolean hasStock) {
+                                         Boolean hasImage, Integer minStock, Integer maxStock, Boolean matchAny)
+    {
         Page<Product> page = new Page<>(current, size);
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
 
-        if (productCode != null && !productCode.trim().isEmpty()) wrapper.like(Product::getProductCode, productCode);
+        if (productCode != null && !productCode.trim().isEmpty()) {
+            if (productCode.contains("\n") || productCode.contains("\r")) {
+                List<String> codeList = Arrays.stream(productCode.split("[\\r\\n]+"))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+
+                if (!codeList.isEmpty()) {
+                    wrapper.in(Product::getProductCode, codeList);
+                }
+            } else {
+                wrapper.like(Product::getProductCode, productCode.trim());
+            }
+        }
         if (brand != null && !brand.trim().isEmpty()) wrapper.like(Product::getBrand, brand);
         if (model != null && !model.trim().isEmpty()) wrapper.like(Product::getModel, model);
         if (packageName != null && !packageName.trim().isEmpty()) wrapper.like(Product::getPackageName, packageName);
 
-        // ==== 🌟 核心修复：将分类查询改为嵌套的 OR 关系 ====
+        // ==== 🌟 核心终极修复：跨级别混选查询逻辑 ====
+        // 必须把所有的分类条件包裹在一个 AND ( ... OR ... OR ... ) 里
+        // 这样才不会和其他条件（比如品牌、有无图）产生串联冲突
         boolean hasL1 = categoryLevel1Id != null && !categoryLevel1Id.isEmpty();
         boolean hasL2 = categoryLevel2Id != null && !categoryLevel2Id.isEmpty();
         boolean hasL3 = categoryLevel3Id != null && !categoryLevel3Id.isEmpty();
 
         if (hasL1 || hasL2 || hasL3) {
             wrapper.and(w -> {
-                boolean isFirst = true;
                 if (hasL1) {
                     w.in(Product::getCategoryLevel1Id, categoryLevel1Id);
-                    isFirst = false;
                 }
                 if (hasL2) {
-                    if (!isFirst) w.or();
+                    // 如果前面已经有条件了，用 or() 拼接；如果前面是空的，直接拼接。
+                    if (hasL1) { w.or(); }
                     w.in(Product::getCategoryLevel2Id, categoryLevel2Id);
-                    isFirst = false;
                 }
                 if (hasL3) {
-                    if (!isFirst) w.or();
+                    // 同理，前面有任何条件，就加上 or()
+                    if (hasL1 || hasL2) { w.or(); }
                     w.in(Product::getCategoryLevel3Id, categoryLevel3Id);
                 }
             });
         }
         // ==================================================
 
-        if (hasStock != null) {
-            if (hasStock) wrapper.gt(Product::getTotalStockQuantity, 0);
-            else wrapper.le(Product::getTotalStockQuantity, 0);
+        // ==== 🌟 智能路由：任意满足(OR) 与 叠加满足(AND) ====
+        boolean hasStockCondition = (minStock != null || maxStock != null);
+        boolean hasImgCondition = (hasImage != null);
+
+        if (Boolean.TRUE.equals(matchAny) && hasStockCondition && hasImgCondition) {
+            wrapper.and(w -> {
+                w.nested(stockW -> {
+                    if (minStock != null) stockW.ge(Product::getTotalStockQuantity, minStock);
+                    if (maxStock != null) stockW.le(Product::getTotalStockQuantity, maxStock);
+                }).or().nested(imgW -> {
+                    if (hasImage) {
+                        imgW.isNotNull(Product::getProductImageUrlBig).ne(Product::getProductImageUrlBig, "");
+                    } else {
+                        imgW.and(iw2 -> iw2.isNull(Product::getProductImageUrlBig).or().eq(Product::getProductImageUrlBig, ""));
+                    }
+                });
+            });
+        } else {
+            if (minStock != null) wrapper.ge(Product::getTotalStockQuantity, minStock);
+            if (maxStock != null) wrapper.le(Product::getTotalStockQuantity, maxStock);
+
+            if (hasImage != null) {
+                if (hasImage) {
+                    wrapper.isNotNull(Product::getProductImageUrlBig).ne(Product::getProductImageUrlBig, "");
+                } else {
+                    wrapper.and(w -> w.isNull(Product::getProductImageUrlBig).or().eq(Product::getProductImageUrlBig, ""));
+                }
+            }
         }
+        // ==================================================
 
         wrapper.orderByDesc(Product::getLastCrawledAt);
         IPage<Product> result = page(page, wrapper);
@@ -84,11 +126,11 @@ public class ProductService extends ServiceImpl<ProductMapper, Product> {
      * 简单分页查询（兼容旧调用）
      */
     public IPage<Product> getProductPage(int current, int size, String productCode, String brand) {
-        return getProductPage(current, size, productCode, brand, null, null, null, null, null, null);
+        return getProductPage(current, size, productCode, brand, null, null, null, null, null, null, null, null, null);
     }
 
     /**
-     * 恢复 saveOrUpdateProduct 方法（修复持久化层报错）
+     * 恢复 saveOrUpdateProduct 方法
      */
     public boolean saveOrUpdateProduct(Product product) {
         if (product == null || product.getProductCode() == null) return false;
@@ -156,7 +198,21 @@ public class ProductService extends ServiceImpl<ProductMapper, Product> {
         }
     }
 
+    /**
+     * 获取所有品牌列表
+     */
     public List<String> getAllBrands() {
-        return list().stream().map(Product::getBrand).filter(b -> b != null && !b.isEmpty()).distinct().sorted().collect(Collectors.toList());
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+        wrapper.select(Product::getBrand)
+                .isNotNull(Product::getBrand)
+                .ne(Product::getBrand, "")
+                .groupBy(Product::getBrand);
+
+        List<Product> list = list(wrapper);
+
+        return list.stream()
+                .map(Product::getBrand)
+                .sorted()
+                .collect(Collectors.toList());
     }
 }

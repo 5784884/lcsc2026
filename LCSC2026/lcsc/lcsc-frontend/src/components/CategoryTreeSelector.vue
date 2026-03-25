@@ -136,32 +136,15 @@ const checkedKeys = ref<string[]>([])
 const treeData = ref<TreeNode[]>([])
 
 const idToKeyMap = ref<Map<number, string>>(new Map())
+const allLeafKeys = ref<Set<string>>(new Set())
 
 // --- 计算属性 ---
-const selectedCount = computed(() => {
-  let count = 0
-  checkedKeys.value.forEach(key => {
-    if (key.startsWith('L3-')) count++
-    else if (key.startsWith('L2-')) count++
-  })
-  return count
-})
-
-const allLeafCount = computed(() => {
-  let count = 0
-  const traverse = (nodes: TreeNode[]) => {
-    nodes.forEach(node => {
-      if (node.isLeaf) count++
-      if (node.children) traverse(node.children)
-    })
-  }
-  traverse(treeData.value)
-  return count
-})
+const selectedCount = computed(() => checkedKeys.value.length)
+const allLeafCount = computed(() => allLeafKeys.value.size)
 
 const filteredTreeData = computed(() => {
   if (!searchKeyword.value) return treeData.value
-  return filterNodes(treeData.value, searchKeyword.value.toLowerCase())
+  return filterNodes(treeData.value, searchKeyword.value.toLowerCase(), false)
 })
 
 // --- 方法 ---
@@ -179,7 +162,6 @@ function initializeTreeData() {
     }
     const l1Entry = l1Map.get(item.level1Id)!
 
-    // 1. 提取纯净的二级 ID (剔除10亿前缀)
     let pureL2Id = null;
     if (item.isPureLevel2) {
       pureL2Id = item.id > L2_ID_OFFSET ? item.id - L2_ID_OFFSET : item.id;
@@ -233,7 +215,6 @@ function initializeTreeData() {
           return
         }
 
-        // 2. 提取纯净的三级 ID (强制剔除20亿前缀)
         let pureL3Id = item.id;
         if (pureL3Id > L3_ID_OFFSET) {
           pureL3Id -= L3_ID_OFFSET;
@@ -241,7 +222,6 @@ function initializeTreeData() {
 
         const l3Key = `L3-${pureL3Id}`;
 
-        // 3. 严格防重：只有不重复的 Key 才塞入节点
         if (!l2Node.children!.some(child => child.key === l3Key)) {
           l2Node.children!.push({
             key: l3Key,
@@ -251,7 +231,6 @@ function initializeTreeData() {
             productCount: item.totalProducts || 0,
             isLeaf: true
           })
-          // 4. 重建标准回显映射
           idToKeyMap.value.set(pureL3Id + L3_ID_OFFSET, l3Key)
         }
       })
@@ -270,30 +249,104 @@ function initializeTreeData() {
 
   treeData.value = tree
 
+  const leaves = new Set<string>()
+  const traverse = (nodes: TreeNode[]) => {
+    nodes.forEach(node => {
+      if (node.isLeaf) leaves.add(node.key)
+      if (node.children) traverse(node.children)
+    })
+  }
+  traverse(tree)
+  allLeafKeys.value = leaves
+
   if (expandedKeys.value.length === 0) {
     expandedKeys.value = tree.map(t => t.key)
   }
 }
 
-function filterNodes(nodes: TreeNode[], keyword: string): TreeNode[] {
+// 🌟 核心修复：如果父节点匹配了搜索词，强制保留它下面的整棵子树！
+function filterNodes(nodes: TreeNode[], keyword: string, forceInclude: boolean): TreeNode[] {
   return nodes.map(node => {
     const newNode = { ...node }
-    if (newNode.children) {
-      newNode.children = filterNodes(newNode.children, keyword)
-    }
     const matchSelf = newNode.title.toLowerCase().includes(keyword)
+
+    // 如果父节点已经被强制保留，或者自己匹配上了，那么它所有的子节点都要被强制保留
+    const shouldForceIncludeChildren = forceInclude || matchSelf
+
+    if (newNode.children) {
+      newNode.children = filterNodes(newNode.children, keyword, shouldForceIncludeChildren)
+    }
+
     const hasMatchingChildren = newNode.children && newNode.children.length > 0
-    if (matchSelf || hasMatchingChildren) {
+
+    // 如果自己匹配上了，或者子节点有匹配的，或者被上级强制要求保留，就显示它
+    if (matchSelf || hasMatchingChildren || forceInclude) {
       return newNode
     }
     return null
   }).filter(Boolean) as TreeNode[]
 }
 
+function getOptimizedKeys(leafKeys: string[]): string[] {
+  const leafSet = new Set(leafKeys)
+
+  const getCheckedNodes = (node: TreeNode): { isFull: boolean, keys: string[] } => {
+    if (node.isLeaf) {
+      if (leafSet.has(node.key)) return { isFull: true, keys: [node.key] }
+      return { isFull: false, keys: [] }
+    }
+
+    let allFull = true
+    let childKeys: string[] = []
+
+    if (node.children) {
+      for (const child of node.children) {
+        const res = getCheckedNodes(child)
+        if (!res.isFull) allFull = false
+        childKeys.push(...res.keys)
+      }
+    }
+
+    if (allFull && node.children && node.children.length > 0) {
+      return { isFull: true, keys: [node.key] }
+    } else {
+      return { isFull: false, keys: childKeys }
+    }
+  }
+
+  const finalKeys: string[] = []
+  for (const root of treeData.value) {
+    finalKeys.push(...getCheckedNodes(root).keys)
+  }
+  return finalKeys
+}
+
+function expandKeysToLeaves(keys: string[]): string[] {
+  const keySet = new Set(keys)
+  const leaves: string[] = []
+
+  const traverse = (node: TreeNode, isParentChecked: boolean) => {
+    const isChecked = isParentChecked || keySet.has(node.key)
+    if (node.isLeaf) {
+      if (isChecked) leaves.push(node.key)
+    }
+    if (node.children) {
+      node.children.forEach(child => traverse(child, isChecked))
+    }
+  }
+
+  treeData.value.forEach(root => traverse(root, false))
+  return leaves
+}
+
 function handleCheck(keys: any, info: any) {
   const checkedKeyList = Array.isArray(keys) ? keys : keys.checked
-  checkedKeys.value = checkedKeyList
-  emitSelectedIds(checkedKeyList)
+
+  const leafCheckedKeys = checkedKeyList.filter((k: string) => allLeafKeys.value.has(k))
+  checkedKeys.value = leafCheckedKeys
+
+  const optimizedKeys = getOptimizedKeys(leafCheckedKeys)
+  emitSelectedIds(optimizedKeys)
 }
 
 function emitSelectedIds(keys: string[]) {
@@ -323,18 +376,20 @@ function handleExpandedKeysChange(keys: string[]) {
 }
 
 function handleSelectAll() {
-  const allKeys: string[] = []
+  const visibleLeaves: string[] = []
   const traverse = (nodes: TreeNode[]) => {
     nodes.forEach(node => {
-      if (node.isLeaf) {
-        allKeys.push(node.key)
-      }
+      if (node.isLeaf) visibleLeaves.push(node.key)
       if (node.children) traverse(node.children)
     })
   }
-  traverse(treeData.value)
-  checkedKeys.value = allKeys
-  emitSelectedIds(allKeys)
+  traverse(filteredTreeData.value)
+
+  const newChecked = new Set([...checkedKeys.value, ...visibleLeaves])
+  const leafArr = Array.from(newChecked)
+
+  checkedKeys.value = leafArr
+  emitSelectedIds(getOptimizedKeys(leafArr))
 }
 
 function handleClearAll() {
@@ -360,8 +415,9 @@ function handleCollapseAll() {
 
 defineExpose({
   getSelectedIds: () => {
+    const optimized = getOptimizedKeys(checkedKeys.value)
     const mixedIds: number[] = []
-    checkedKeys.value.forEach(key => {
+    optimized.forEach(key => {
       if (key.startsWith('L3-')) {
         const rawId = parseInt(key.replace('L3-', ''))
         if (!isNaN(rawId)) mixedIds.push(rawId + L3_ID_OFFSET)
@@ -384,12 +440,12 @@ watch(
     () => props.selectedCategoryIds,
     (newIds) => {
       if (newIds && newIds.length > 0) {
-        const keysToCkeck: string[] = []
+        const keysToCheck: string[] = []
         newIds.forEach(id => {
           const key = idToKeyMap.value.get(id)
-          if (key) keysToCkeck.push(key)
+          if (key) keysToCheck.push(key)
         })
-        checkedKeys.value = keysToCkeck
+        checkedKeys.value = expandKeysToLeaves(keysToCheck)
       } else {
         checkedKeys.value = []
       }
@@ -404,18 +460,43 @@ watch(
         initializeTreeData()
         if (props.selectedCategoryIds && props.selectedCategoryIds.length > 0) {
           nextTick(() => {
-            const keysToCkeck: string[] = []
+            const keysToCheck: string[] = []
             props.selectedCategoryIds!.forEach(id => {
               const key = idToKeyMap.value.get(id)
-              if (key) keysToCkeck.push(key)
+              if (key) keysToCheck.push(key)
             })
-            checkedKeys.value = keysToCkeck
+            checkedKeys.value = expandKeysToLeaves(keysToCheck)
           })
         }
       }
     },
     { immediate: true, deep: true }
 )
+
+// 🌟 核心增强：当搜索关键词发生变化时，自动展开含有搜索结果的节点
+watch(searchKeyword, (newVal) => {
+  if (newVal) {
+    const keysToExpand = new Set<string>()
+    const findMatch = (nodes: TreeNode[], isMatchParent: boolean) => {
+      nodes.forEach(node => {
+        const isMatch = isMatchParent || node.title.toLowerCase().includes(newVal.toLowerCase())
+        if (isMatch && node.children) {
+          keysToExpand.add(node.key) // 如果匹配到当前节点或父节点，则展开它
+        }
+        if (node.children) {
+          findMatch(node.children, isMatch)
+          // 向上追溯：如果子节点有匹配的，父节点也必须展开
+          if (node.children.some(child => keysToExpand.has(child.key) || child.title.toLowerCase().includes(newVal.toLowerCase()))) {
+            keysToExpand.add(node.key)
+          }
+        }
+      })
+    }
+    findMatch(treeData.value, false)
+    expandedKeys.value = Array.from(keysToExpand)
+  }
+})
+
 </script>
 
 <style scoped lang="scss">

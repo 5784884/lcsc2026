@@ -1,99 +1,143 @@
 <template>
   <div class="product-management">
-    <a-card class="mb-4">
-      <a-form :model="searchForm" layout="inline">
-        <a-form-item label="产品编号">
-          <a-input
-              v-model:value="searchForm.productCode"
-              placeholder="输入产品编号"
-              allow-clear
-              style="width: 200px"
-          />
-        </a-form-item>
-        <a-form-item label="品牌">
-          <a-input
-              v-model:value="searchForm.brand"
-              placeholder="输入品牌名称"
-              allow-clear
-              style="width: 200px"
-          />
-        </a-form-item>
-        <a-form-item label="型号">
-          <a-input
-              v-model:value="searchForm.model"
-              placeholder="输入型号"
-              allow-clear
-              style="width: 200px"
-          />
-        </a-form-item>
+    <a-card class="mb-4 search-card">
+      <a-form :model="searchForm" layout="horizontal" class="advanced-search-form">
+        <a-row :gutter="16">
+          <a-col :xs="24" :sm="12" :md="8" :lg="6">
+            <a-form-item label="产品编号">
+              <a-textarea
+                  v-model:value="searchForm.productCode"
+                  placeholder="多个编号请换行"
+                  allow-clear
+                  :auto-size="{ minRows: 1, maxRows: 1 }"
+                  style="width: 100%"
+              />
+            </a-form-item>
+          </a-col>
+          <a-col :xs="24" :sm="12" :md="8" :lg="5">
+            <a-form-item label="品牌">
+              <a-input
+                  v-model:value="searchForm.brand"
+                  placeholder="品牌名称"
+                  allow-clear
+                  style="width: 100%"
+              />
+            </a-form-item>
+          </a-col>
+          <a-col :xs="24" :sm="12" :md="8" :lg="5">
+            <a-form-item label="型号">
+              <a-input
+                  v-model:value="searchForm.model"
+                  placeholder="输入型号"
+                  allow-clear
+                  style="width: 100%"
+              />
+            </a-form-item>
+          </a-col>
+          <a-col :xs="24" :sm="12" :md="12" :lg="8">
+            <a-form-item label="所属分类">
+              <a-input-group compact style="display: flex; width: 100%">
+                <a-button
+                    @click="handleOpenCategorySelector"
+                    style="flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis;"
+                    :title="selectedCategories.length > 0 ? `已选 ${selectedCategories.length} 个分类` : '点击选择分类'"
+                >
+                  <template #icon><AppstoreOutlined /></template>
+                  <span style="margin-left: 4px;">
+                    {{ selectedCategories.length > 0 ? `已选 ${selectedCategories.length} 个` : '选择分类' }}
+                  </span>
+                </a-button>
+                <a-button
+                    v-if="selectedCategories.length > 0"
+                    @click="clearSelectedCategories"
+                    title="清除分类"
+                >
+                  <template #icon><DeleteOutlined style="color: #ff4d4f;"/></template>
+                </a-button>
+              </a-input-group>
+            </a-form-item>
+          </a-col>
+        </a-row>
 
-        <a-form-item label="所属分类">
-          <a-button @click="handleOpenCategorySelector">
-            <template #icon><AppstoreOutlined /></template>
-            {{ selectedCategories.length > 0 ? `已选择 ${selectedCategories.length} 个分类` : '点击选择分类' }}
-          </a-button>
-          <a-button
-              v-if="selectedCategories.length > 0"
-              type="link"
-              size="small"
-              @click="clearSelectedCategories"
-              style="margin-left: 8px;"
-          >
-            清除
-          </a-button>
-        </a-form-item>
-        <a-form-item label="库存状态">
-          <a-select
-              v-model:value="searchForm.hasStock"
-              placeholder="选择库存状态"
-              allow-clear
-              style="width: 150px"
-          >
-            <a-select-option label="有库存" :value="true">有库存</a-select-option>
-            <a-select-option label="无库存" :value="false">无库存</a-select-option>
-          </a-select>
-        </a-form-item>
+        <a-row :gutter="16" type="flex" align="middle" class="second-row">
+          <a-col :xs="24" :sm="24" :md="24" :lg="16">
+            <div class="combined-condition-box">
+              <span class="condition-label">联合过滤：</span>
+
+              <a-select
+                  v-model:value="searchForm.hasImage"
+                  placeholder="图片状态"
+                  allow-clear
+                  style="width: 110px; margin-right: 12px;"
+              >
+                <a-select-option :value="true">有图</a-select-option>
+                <a-select-option :value="false">无图</a-select-option>
+              </a-select>
+
+              <a-input-group compact class="compact-group">
+                <a-input-number
+                    v-model:value="searchForm.minStock"
+                    class="stock-input"
+                    placeholder="最小库存"
+                    :min="0"
+                />
+                <a-input
+                    class="stock-separator"
+                    placeholder="~"
+                    disabled
+                />
+                <a-input-number
+                    v-model:value="searchForm.maxStock"
+                    class="stock-input border-left-0"
+                    placeholder="最大库存"
+                    :min="0"
+                />
+              </a-input-group>
+
+              <a-checkbox v-model:checked="searchForm.matchAny" class="match-any-checkbox">
+                <a-tooltip title="勾选后，满足【图片状态】或【库存区间】其中一项即可查出">
+                  <span class="highlight-text">任意满足</span>
+                </a-tooltip>
+              </a-checkbox>
+            </div>
+          </a-col>
+
+          <a-col :xs="24" :sm="24" :md="24" :lg="8">
+            <div class="search-actions">
+              <a-space>
+                <a-button type="primary" @click="handleSearch">
+                  <template #icon><SearchOutlined /></template>
+                  搜索
+                </a-button>
+                <a-button @click="handleReset">
+                  <template #icon><ReloadOutlined /></template>
+                  重置
+                </a-button>
+                <a-dropdown>
+                  <template #overlay>
+                    <a-menu @click="handleExportMenuClick">
+                      <a-menu-item key="excel-current">
+                        <FileExcelOutlined />导出当前结果 (Excel)
+                      </a-menu-item>
+                      <a-menu-item key="excel-all">
+                        <FileExcelOutlined />导出所有产品 (Excel)
+                      </a-menu-item>
+                      <a-menu-divider />
+                      <a-menu-item key="csv-current">
+                        <FileTextOutlined />导出当前结果 (CSV)
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                  <a-button class="btn-success">
+                    <template #icon><DownloadOutlined /></template>
+                    导出 <DownOutlined style="font-size: 10px; margin-left: 4px;" />
+                  </a-button>
+                </a-dropdown>
+              </a-space>
+            </div>
+          </a-col>
+        </a-row>
       </a-form>
-      <div class="search-actions">
-        <a-button type="primary" @click="handleSearch">
-          <template #icon>
-            <SearchOutlined />
-          </template>
-          搜索
-        </a-button>
-        <a-button @click="handleReset">
-          <template #icon>
-            <ReloadOutlined />
-          </template>
-          重置
-        </a-button>
-        <a-dropdown>
-          <template #overlay>
-            <a-menu @click="handleExportMenuClick">
-              <a-menu-item key="excel-current">
-                <FileExcelOutlined />
-                导出当前结果（Excel）
-              </a-menu-item>
-              <a-menu-item key="excel-all">
-                <FileExcelOutlined />
-                导出所有产品（Excel）
-              </a-menu-item>
-              <a-menu-divider />
-              <a-menu-item key="csv-current">
-                <FileTextOutlined />
-                导出当前结果（CSV）
-              </a-menu-item>
-            </a-menu>
-          </template>
-          <a-button class="btn-success">
-            <template #icon>
-              <DownloadOutlined />
-            </template>
-            导出数据
-            <DownOutlined />
-          </a-button>
-        </a-dropdown>
-      </div>
     </a-card>
 
     <a-card>
@@ -644,12 +688,12 @@ import {
   FileExcelOutlined,
   FileTextOutlined,
   DownOutlined,
-  AppstoreOutlined // ================= 新增图标 =================
+  AppstoreOutlined
 } from '@ant-design/icons-vue'
-// ================= 新增组件和 API =================
+
 import CategoryTreeSelector from '@/components/CategoryTreeSelector.vue'
 import { getAllCategories } from '@/api/product'
-// ===============================================
+
 import {
   getProductPage,
   deleteProduct,
@@ -670,8 +714,7 @@ import type { Product, CategoryLevel1Code, CategoryLevel2Code, CategoryLevel3Cod
 
 const route = useRoute()
 
-// ================= 新增：智能解析选中的分类层级（多选反推父节点版） =================
-// ================= 辅助函数：按属性分组 =================
+// ================= 新增：智能解析选中的分类层级 =================
 const groupBy = (array: any[], key: string) => {
   return array.reduce((result, currentValue) => {
     const groupKey = String(currentValue[key])
@@ -680,9 +723,6 @@ const groupBy = (array: any[], key: string) => {
   }, {} as Record<string, any[]>)
 }
 
-// ================= 终极智能解析：严格防膨胀版 =================
-// ================= 终极智能解析：兼容偏移量与智能降维版 =================
-// ================= 极简、零冲突的分类解析 =================
 const parseSelectedCategories = () => {
   const result = {
     categoryLevel1Id: [] as number[],
@@ -692,24 +732,23 @@ const parseSelectedCategories = () => {
 
   if (!selectedCategories.value || selectedCategories.value.length === 0) return result;
 
-  // 绝不去树里查找！直接根据数值大小，放进对应的筐里
   selectedCategories.value.forEach(id => {
     if (id > 2000000000) {
-      result.categoryLevel3Id.push(id - 2000000000); // 属于三级
+      result.categoryLevel3Id.push(id - 2000000000);
     } else if (id > 1000000000) {
-      result.categoryLevel2Id.push(id - 1000000000); // 属于二级
+      result.categoryLevel2Id.push(id - 1000000000);
     } else {
-      result.categoryLevel1Id.push(id);              // 属于一级
+      result.categoryLevel1Id.push(id);
     }
   });
 
-  // 去重兜底
   result.categoryLevel1Id = Array.from(new Set(result.categoryLevel1Id));
   result.categoryLevel2Id = Array.from(new Set(result.categoryLevel2Id));
   result.categoryLevel3Id = Array.from(new Set(result.categoryLevel3Id));
 
   return result;
 }
+
 // 响应式数据
 const loading = ref(false)
 const tableData = ref<Product[]>([])
@@ -728,18 +767,15 @@ const productResources = ref<ProductResources>({
 })
 const activeResourceTab = ref('all')
 
-// ================= 新增状态变量 =================
 const showCategorySelector = ref(false)
 const categoryTreeSelectorRef = ref<InstanceType<typeof CategoryTreeSelector>>()
 const allCategories = ref<any[]>([])
-const selectedCategories = ref<number[]>([]) // 最终确认选择的分类ID
-const tempSelectedCategories = ref<number[]>([]) // 弹窗中临时选择的分类ID
-// ==============================================
+const selectedCategories = ref<number[]>([])
+const tempSelectedCategories = ref<number[]>([])
 
 const level1Categories = ref<CategoryLevel1Code[]>([])
 const editLevel2Categories = ref<CategoryLevel2Code[]>([])
 
-// 为了不修改后端接口，我们保留 searchForm 的结构
 const searchForm = reactive({
   productCode: '',
   brand: '',
@@ -747,7 +783,11 @@ const searchForm = reactive({
   categoryLevel1Id: undefined as number | undefined,
   categoryLevel2Id: undefined as number | undefined,
   categoryLevel3Id: undefined as number | undefined,
-  hasStock: undefined as boolean | undefined
+
+  hasImage: undefined as boolean | undefined,
+  minStock: undefined as number | undefined,
+  maxStock: undefined as number | undefined,
+  matchAny: false
 })
 
 const pagination = reactive({
@@ -785,7 +825,6 @@ const editingProduct = reactive<Product>({
   ladderPrice6Price: undefined
 })
 
-// 表单验证规则
 const productRules = {
   productCode: [
     { required: true, message: '请输入产品编号', trigger: 'blur' }
@@ -798,14 +837,11 @@ const productRules = {
   ]
 }
 
-// 方法
-// 方法
 const fetchData = async () => {
   loading.value = true
   try {
     const parsedCategoryParams = parseSelectedCategories()
 
-    // 💡 核心防御：把数组转成 SpringBoot 喜欢的纯字符串 "157,158"
     const formatParam = (arr: number[], formVal: number | undefined) => {
       if (arr && arr.length > 0) return arr.join(',')
       return formVal ? String(formVal) : undefined
@@ -817,14 +853,14 @@ const fetchData = async () => {
       productCode: searchForm.productCode,
       brand: searchForm.brand,
       model: searchForm.model,
-
-      // ================= 修复：使用防 [] 序列化处理 =================
       categoryLevel1Id: formatParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
       categoryLevel2Id: formatParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
       categoryLevel3Id: formatParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
-      // ==============================================================
 
-      hasStock: searchForm.hasStock
+      hasImage: searchForm.hasImage,
+      minStock: searchForm.minStock,
+      maxStock: searchForm.maxStock,
+      matchAny: searchForm.matchAny
     }
     console.log('调用产品搜索API，参数:', params)
     const result = await getProductPage(params)
@@ -838,16 +874,12 @@ const fetchData = async () => {
   }
 }
 
-// ================= 新增方法：树形分类选择逻辑 =================
-// ================= 新增方法：树形分类选择逻辑 =================
-// ================= 修正版：完美A-Z排序且不破坏组件的逻辑 =================
 const loadAllCategoriesForSelector = async () => {
   try {
     const data = await getAllCategories()
     if (data && data.length > 0) {
       let mappedData = data.map((item: any) => {
 
-        // 🌟 终极精准提取：绝对不串级！优先拿自己的 id，如果没有再按级别拿专属字段
         let trueId = item.id;
         if (!trueId) {
           if (item.categoryLevel === 'level3') {
@@ -859,7 +891,6 @@ const loadAllCategoriesForSelector = async () => {
           }
         }
 
-        // 根据级别加上后端的偏移量 (20亿 / 10亿)
         let offsetId = trueId;
         if (item.categoryLevel === 'level3') {
           offsetId = trueId + 2000000000;
@@ -868,11 +899,10 @@ const loadAllCategoriesForSelector = async () => {
         }
 
         return {
-          id: offsetId, // 传给 Tree 组件和后端的带偏移量 ID
-          rawId: trueId, // 保留真实的数据库 ID 备用
+          id: offsetId,
+          rawId: trueId,
           name: item.categoryName || item.categoryLevel3Name || item.categoryLevel2Name,
 
-          // 必须给 level2Id 也加上 10 亿的偏移量，树组件才能把 L3 挂在 L2 下面！
           level2Id: item.categoryLevel2Id ? item.categoryLevel2Id + 1000000000 : null,
 
           level2Name: item.categoryLevel2Name,
@@ -883,7 +913,6 @@ const loadAllCategoriesForSelector = async () => {
         };
       })
 
-      // 下面的排序逻辑保持不变...
       mappedData.sort((a, b) => {
         const l1A = String(a.level1Name || '')
         const l1B = String(b.level1Name || '')
@@ -906,7 +935,7 @@ const loadAllCategoriesForSelector = async () => {
     console.error('加载所有分类失败:', error)
   }
 }
-// ==============================================================
+
 const handleOpenCategorySelector = async () => {
   if (allCategories.value.length === 0) {
     await loadAllCategoriesForSelector()
@@ -932,9 +961,7 @@ const clearSelectedCategories = () => {
   selectedCategories.value = []
   tempSelectedCategories.value = []
 }
-// =======================================================
 
-// 加载分类数据 (依然保留给编辑表单使用)
 const loadCategories = async () => {
   try {
     level1Categories.value = await getCategoryLevel1List()
@@ -943,7 +970,6 @@ const loadCategories = async () => {
   }
 }
 
-// 处理一级分类变化（编辑）
 const handleEditLevel1Change = async (categoryLevel1Id: number | undefined) => {
   editingProduct.categoryLevel2Id = 0
   editLevel2Categories.value = []
@@ -969,10 +995,13 @@ const handleReset = () => {
   searchForm.categoryLevel1Id = undefined
   searchForm.categoryLevel2Id = undefined
   searchForm.categoryLevel3Id = undefined
-  searchForm.hasStock = undefined
-  // ================= 增加重置逻辑 =================
+
+  searchForm.hasImage = undefined
+  searchForm.minStock = undefined
+  searchForm.maxStock = undefined
+  searchForm.matchAny = false
+
   clearSelectedCategories()
-  // ============================================
   pagination.current = 1
   fetchData()
 }
@@ -1180,14 +1209,12 @@ const handleExportMenuClick = async ({ key }: { key: string }) => {
     let response: any
     const parsedCategoryParams = parseSelectedCategories()
 
-    // 💡 只返回有内容的数组，如果为空，直接返回 undefined 丢弃该字段
     const getArrayParam = (arr: number[], formVal: number | undefined) => {
       if (arr && arr.length > 0) return arr;
       if (formVal) return [formVal];
       return undefined;
     }
 
-    // 💥 致命Bug修复：键名必须叫 categoryLevel1Id (去掉了末尾的 s !)
     const exportParams = {
       categoryLevel1Id: getArrayParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
       categoryLevel2Id: getArrayParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
@@ -1196,12 +1223,14 @@ const handleExportMenuClick = async ({ key }: { key: string }) => {
       brand: searchForm.brand ? searchForm.brand.trim() : undefined,
       productCode: searchForm.productCode ? searchForm.productCode.trim() : undefined,
       model: searchForm.model ? searchForm.model.trim() : undefined,
-      hasStock: (searchForm.hasStock === true || searchForm.hasStock === false) ? searchForm.hasStock : undefined
+      hasImage: searchForm.hasImage,
+      minStock: searchForm.minStock,
+      maxStock: searchForm.maxStock,
+      matchAny: searchForm.matchAny
     }
 
     console.log('📤 最终极干净参数:', exportParams);
 
-    // 执行导出请求
     switch (key) {
       case 'excel-all': response = await exportAllProductsExcel(); break
       case 'excel-current': response = await exportProductsExcel(exportParams); break
@@ -1242,7 +1271,6 @@ const handleExportMenuClick = async ({ key }: { key: string }) => {
   }
 }
 
-// 生命周期
 onMounted(async () => {
   const categoryLevel2Id = route.query.categoryLevel2Id
   if (categoryLevel2Id) {
@@ -1253,7 +1281,6 @@ onMounted(async () => {
     }
   }
 
-  // 预加载编辑表单需要的一级分类数据
   await loadCategories()
 
   if (searchForm.categoryLevel2Id) {
@@ -1303,7 +1330,6 @@ onMounted(async () => {
   margin-bottom: 4px;
 }
 
-/* 主图缩略图样式 */
 .product-thumbnail {
   width: 50px;
   height: 50px;
@@ -1332,14 +1358,12 @@ onMounted(async () => {
   border-radius: 4px;
 }
 
-/* 分类标签样式 */
 .category-tag {
   font-size: 12px;
   padding: 2px 8px;
   margin: 0;
 }
 
-/* 价格显示样式 */
 .price-cell {
   font-family: 'Courier New', monospace;
   color: #ff4d4f;
@@ -1356,7 +1380,6 @@ onMounted(async () => {
   font-size: 12px;
 }
 
-/* 图片预览容器 */
 .image-preview-container {
   display: flex;
   justify-content: center;
@@ -1366,7 +1389,6 @@ onMounted(async () => {
   border-radius: 4px;
 }
 
-/* 阶梯价格表单布局 */
 .ladder-price-section {
   background: #fafafa;
   padding: 16px;
@@ -1399,29 +1421,6 @@ onMounted(async () => {
   border-color: #73d13d;
 }
 
-.btn-warning {
-  background-color: #faad14;
-  border-color: #faad14;
-  color: white;
-}
-
-.btn-warning:hover {
-  background-color: #ffc53d;
-  border-color: #ffc53d;
-}
-
-.btn-info {
-  background-color: #1890ff;
-  border-color: #1890ff;
-  color: white;
-}
-
-.btn-info:hover {
-  background-color: #40a9ff;
-  border-color: #40a9ff;
-}
-
-/* 资源查看对话框样式 */
 .empty-resources {
   text-align: center;
   padding: 40px 0;
@@ -1532,5 +1531,99 @@ onMounted(async () => {
   font-size: 12px;
   color: #666;
   font-weight: 500;
+}
+
+/* --- 搜索表单专属优化 --- */
+.advanced-search-form .ant-form-item {
+  margin-bottom: 16px;
+}
+
+/* 分类按钮组优化防溢出 */
+.category-select-wrapper {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.category-btn {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  padding: 0 12px;
+}
+.category-btn .btn-text {
+  display: inline-block;
+  max-width: calc(100% - 24px); /* 给图标留空间 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.clear-btn {
+  padding: 0 8px;
+  margin-left: 4px;
+}
+
+/* 联合过滤条件专属盒子 */
+.combined-condition-box {
+  display: flex;
+  align-items: center;
+  background: #fafafa;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #f0f0f0;
+  flex-wrap: wrap; /* 小屏幕自动折行 */
+  gap: 8px;
+}
+
+.condition-label {
+  font-size: 14px;
+  color: #5c5c5c;
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+.compact-group {
+  display: flex;
+  width: max-content;
+}
+.stock-input {
+  width: 90px;
+  text-align: center;
+}
+.stock-separator {
+  width: 30px;
+  border-left: 0;
+  pointer-events: none;
+  background-color: #fff;
+}
+.border-left-0 {
+  border-left: 0 !important;
+}
+
+.match-any-checkbox {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid #d9d9d9;
+}
+
+.highlight-text {
+  color: #fa8c16;
+  font-weight: 500;
+  user-select: none;
+}
+
+/* 按钮操作区固定靠右 */
+.search-actions {
+  text-align: right;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* 保证第二行垂直居中 */
+.second-row {
+  margin-top: 8px;
 }
 </style>
