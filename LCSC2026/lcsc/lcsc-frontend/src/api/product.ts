@@ -10,10 +10,10 @@ import type {
 } from '@/types'
 
 // 分页查询产品
-export const getProductPage = (params: ProductSearchParams): Promise<PageResult<Product>> => {
-  return api.get<PageResult<Product>>('/products/page', { params })
+// 分页查询产品 (✅ 已修改为 POST 请求，参数放入请求体 data 中)
+export const getProductPage = (data: ProductSearchParams): Promise<PageResult<Product>> => {
+  return api.post<PageResult<Product>>('/products/page', data)
 }
-
 // 根据ID查询产品
 export const getProductById = (id: number): Promise<Product> => {
   return api.get<Product>(`/products/${id}`)

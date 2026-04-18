@@ -16,7 +16,7 @@
             </a-form-item>
           </a-col>
 
-          <a-col :span="18" v-if="filterForm.shopId">
+          <a-col :span="18" v-if="filterForm.shopId !== undefined">
             <a-form-item label="配置方案管理">
               <a-input-group compact>
                 <a-select
@@ -165,7 +165,7 @@
 
         <a-form-item>
           <a-space>
-            <a-button type="primary" @click="handleAddTask" :loading="addLoading" :disabled="!filterForm.shopId">
+            <a-button type="primary" @click="handleAddTask" :loading="addLoading" :disabled="filterForm.shopId === undefined">
               <template #icon><PlusOutlined /></template>
               确定添加
             </a-button>
@@ -196,12 +196,23 @@
           <a-button
               type="primary"
               danger
-              @click="handleExport"
-              :loading="exportLoading"
-              :disabled="taskList.length === 0"
+              @click="handleExport('excel')"
+              :loading="exportLoading === 'excel'"
+              :disabled="taskList.length === 0 || (exportLoading !== false && exportLoading !== 'excel')"
           >
             <template #icon><DownloadOutlined /></template>
-            确定导出
+            {{ exportLoading === 'excel' ? exportStatusText : '导出 Excel' }}
+          </a-button>
+
+          <a-button
+              type="primary"
+              style="background-color: #52c41a; border-color: #52c41a;"
+              @click="handleExport('csv')"
+              :loading="exportLoading === 'csv'"
+              :disabled="taskList.length === 0 || (exportLoading !== false && exportLoading !== 'csv')"
+          >
+            <template #icon><DownloadOutlined /></template>
+            {{ exportLoading === 'csv' ? exportStatusText : '导出 CSV' }}
           </a-button>
           <a-button @click="handleClearTasks" :disabled="taskList.length === 0">
             <template #icon><DeleteOutlined /></template>
@@ -339,7 +350,8 @@ const categoryTreeSelectorRef = ref<InstanceType<typeof CategoryTreeSelector>>()
 
 const taskList = ref<ExportTaskItem[]>([])
 const addLoading = ref(false)
-const exportLoading = ref(false)
+const exportLoading = ref<string | false>(false)
+const exportStatusText = ref('生成中...')
 
 // 🌟 修改点 2：默认值设为 undefined，这样就能显示 placeholder="默认全部"
 const splitSize = ref<number | undefined>(undefined)
@@ -384,7 +396,7 @@ const loadSchemesForShop = (shopId: number) => {
 }
 
 const handleSaveScheme = () => {
-  if (!filterForm.shopId) {
+  if (filterForm.shopId === undefined) {
     message.warning('请先选择店铺')
     return
   }
@@ -464,10 +476,10 @@ const handleDeleteScheme = (schemeId: string) => {
 const loadShops = async () => {
   try {
     const shops = await getAllShops()
-    shopOptions.value = shops.map((shop: Shop) => ({
-      label: shop.shopName,
-      value: shop.id
-    }))
+    shopOptions.value = [
+      { label: '通用', value: 0 },
+      ...shops.map((shop: Shop) => ({ label: shop.shopName, value: shop.id }))
+    ]
   } catch (error) {
     message.error('加载店铺列表失败')
   }
@@ -572,8 +584,8 @@ const handleCategorySelectorOk = () => {
   showCategorySelector.value = false
 }
 
-const handleShopChange = (val: number) => {
-  if (val) {
+const handleShopChange = (val: number | undefined) => {
+  if (val !== undefined && val !== null) {
     loadSchemesForShop(val)
   } else {
     schemeList.value = []
@@ -582,7 +594,7 @@ const handleShopChange = (val: number) => {
 }
 
 const handleAddTask = async () => {
-  if (!filterForm.shopId) {
+  if (filterForm.shopId === undefined) {
     message.warning('请先选择店铺')
     return
   }
@@ -628,22 +640,24 @@ const handleAddTask = async () => {
   }
 }
 
-const handleExport = async () => {
+const handleExport = async (format: 'excel' | 'csv') => {
   if (taskList.value.length === 0) {
     message.warning('任务列表为空，请先添加产品')
     return
   }
-  exportLoading.value = true
+  exportLoading.value = format // 记录当前导出的格式
+  exportStatusText.value = '提交中...'
   try {
-    // 🌟 修改点 3：如果没填，默认使用当前任务总数（即不分表，一次全导出来）
     const actualSplitSize = splitSize.value || taskList.value.length
-
-    await exportTaobaoExcel(taskList.value, actualSplitSize)
+    exportStatusText.value = '生成中，请稍候...'
+    // 🌟 将 format 参数传给刚才修改的 API 方法
+    await exportTaobaoExcel(taskList.value, actualSplitSize, format)
     message.success('导出成功')
   } catch (error: any) {
     message.error('导出失败: ' + (error.message || '未知错误'))
   } finally {
     exportLoading.value = false
+    exportStatusText.value = '生成中...'
   }
 }
 

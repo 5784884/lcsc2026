@@ -42,20 +42,47 @@ public class ProductService extends ServiceImpl<ProductMapper, Product> {
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
 
         if (productCode != null && !productCode.trim().isEmpty()) {
-            if (productCode.contains("\n") || productCode.contains("\r")) {
-                List<String> codeList = Arrays.stream(productCode.split("[\\r\\n]+"))
+            // 兼容换行和逗号分隔
+            if (productCode.contains("\n") || productCode.contains("\r") || productCode.contains(",")) {
+                List<String> codeList = Arrays.stream(productCode.split("[\\r\\n,]+"))
                         .map(String::trim)
                         .filter(s -> !s.isEmpty())
+                        .distinct() // 🌟 必须去重！几十万数据如果有重复，会严重浪费数据库性能
                         .collect(Collectors.toList());
 
                 if (!codeList.isEmpty()) {
-                    wrapper.in(Product::getProductCode, codeList);
+                    // 🌟 核心防爆逻辑：MySQL IN 语句安全切片 (每 1000 个一批)
+                    if (codeList.size() <= 1000) {
+                        wrapper.in(Product::getProductCode, codeList);
+                    } else {
+                        wrapper.and(w -> {
+                            // 将几万/几十万的集合，切成每 1000 个一个 OR IN 块
+                            for (int i = 0; i < codeList.size(); i += 1000) {
+                                List<String> subList = codeList.subList(i, Math.min(i + 1000, codeList.size()));
+                                w.or().in(Product::getProductCode, subList);
+                            }
+                        });
+                    }
                 }
             } else {
                 wrapper.like(Product::getProductCode, productCode.trim());
             }
         }
-        if (brand != null && !brand.trim().isEmpty()) wrapper.like(Product::getBrand, brand);
+        if (brand != null && !brand.trim().isEmpty()) {
+            if (brand.contains(",") || brand.contains("\n") || brand.contains("\r")) {
+                List<String> brandList = Arrays.stream(brand.split("[,\\r\\n]+"))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .distinct()
+                        .collect(Collectors.toList());
+
+                if (!brandList.isEmpty()) {
+                    wrapper.in(Product::getBrand, brandList);
+                }
+            } else {
+                wrapper.like(Product::getBrand, brand.trim());
+            }
+        }
         if (model != null && !model.trim().isEmpty()) wrapper.like(Product::getModel, model);
         if (packageName != null && !packageName.trim().isEmpty()) wrapper.like(Product::getPackageName, packageName);
 

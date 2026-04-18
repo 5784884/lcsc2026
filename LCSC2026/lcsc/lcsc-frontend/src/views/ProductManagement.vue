@@ -16,12 +16,19 @@
           </a-col>
           <a-col :xs="24" :sm="12" :md="8" :lg="5">
             <a-form-item label="品牌">
-              <a-input
-                  v-model:value="searchForm.brand"
-                  placeholder="品牌名称"
+              <a-select
+                  v-model:value="searchForm.brands"
+                  mode="tags"
+                  placeholder="选择或输入品牌(回车/粘贴换行)"
+                  :max-tag-count="2"
+                  :token-separators="[',']"
+                  show-search
                   allow-clear
                   style="width: 100%"
-              />
+                  @paste="handleBrandPaste"
+              >
+                <a-select-option v-for="item in brandOptions" :key="item" :value="item">{{ item }}</a-select-option>
+              </a-select>
             </a-form-item>
           </a-col>
           <a-col :xs="24" :sm="12" :md="8" :lg="5">
@@ -105,15 +112,16 @@
           <a-col :xs="24" :sm="24" :md="24" :lg="8">
             <div class="search-actions">
               <a-space>
-                <a-button type="primary" @click="handleSearch">
+                <a-button type="primary" @click="handleSearch" :disabled="isExporting">
                   <template #icon><SearchOutlined /></template>
                   搜索
                 </a-button>
-                <a-button @click="handleReset">
+                <a-button @click="handleReset" :disabled="isExporting">
                   <template #icon><ReloadOutlined /></template>
                   重置
                 </a-button>
-                <a-dropdown>
+
+                <a-dropdown :disabled="isExporting">
                   <template #overlay>
                     <a-menu @click="handleExportMenuClick">
                       <a-menu-item key="excel-current">
@@ -128,11 +136,15 @@
                       </a-menu-item>
                     </a-menu>
                   </template>
-                  <a-button class="btn-success">
+                  <a-button class="btn-success" :loading="isExporting">
                     <template #icon><DownloadOutlined /></template>
-                    导出 <DownOutlined style="font-size: 10px; margin-left: 4px;" />
+                    {{ isExporting ? '导出中...' : '导出' }} <DownOutlined style="font-size: 10px; margin-left: 4px;" />
                   </a-button>
                 </a-dropdown>
+
+                <a-button v-if="isExporting" danger @click="handleCancelExport">
+                  停止导出
+                </a-button>
               </a-space>
             </div>
           </a-col>
@@ -143,7 +155,7 @@
     <a-card>
       <a-table
           :dataSource="tableData"
-          :loading="loading"
+          :loading="loading && !isExporting"
           :pagination="false"
           bordered
           :scroll="{ x: 1400 }"
@@ -217,13 +229,13 @@
         <a-table-column key="action" title="操作" width="320" fixed="right">
           <template #default="{ record }">
             <a-space >
-              <a-button size="small" @click="handleEdit(record)">
+              <a-button size="small" @click="handleEdit(record)" :disabled="isExporting">
                 <template #icon>
                   <EditOutlined />
                 </template>
                 编辑
               </a-button>
-              <a-button size="small" danger @click="handleDelete(record)">
+              <a-button size="small" danger @click="handleDelete(record)" :disabled="isExporting">
                 <template #icon>
                   <DeleteOutlined />
                 </template>
@@ -245,6 +257,7 @@
             show-total
             @change="handleCurrentChange"
             @show-size-change="handleSizeChange"
+            :disabled="isExporting"
         >
           <template #buildOptionText="props">
             <span>{{ props.value }}条/页</span>
@@ -277,7 +290,7 @@
       />
     </a-modal>
     <a-modal
-        v-model:visible="showAddDialog"
+        v-model:open="showAddDialog"
         :title="editingProduct.id ? '编辑产品' : '新增产品'"
         width="800px"
         @ok="handleSaveProduct"
@@ -530,7 +543,7 @@
     </a-modal>
 
     <a-modal
-        v-model:visible="showCrawlerDialog"
+        v-model:open="showCrawlerDialog"
         title="爬取产品"
         width="500px"
         @ok="handleCrawlerSubmit"
@@ -553,7 +566,7 @@
     </a-modal>
 
     <a-modal
-        v-model:visible="showImagePreview"
+        v-model:open="showImagePreview"
         title="产品主图"
         width="800px"
         :footer="null"
@@ -564,7 +577,7 @@
     </a-modal>
 
     <a-modal
-        v-model:visible="showResourcesDialog"
+        v-model:open="showResourcesDialog"
         :title="`产品资源 - ${currentProductCode}`"
         width="1000px"
         :footer="null"
@@ -668,7 +681,6 @@
     </a-modal>
   </div>
 </template>
-
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
@@ -676,12 +688,8 @@ import { useRoute } from 'vue-router'
 import {
   SearchOutlined,
   ReloadOutlined,
-  CloudDownloadOutlined,
-  PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  BarChartOutlined,
-  FolderOutlined,
   FileOutlined,
   EyeOutlined,
   DownloadOutlined,
@@ -690,9 +698,10 @@ import {
   DownOutlined,
   AppstoreOutlined
 } from '@ant-design/icons-vue'
+import * as XLSX from 'xlsx'
 
 import CategoryTreeSelector from '@/components/CategoryTreeSelector.vue'
-import { getAllCategories } from '@/api/product'
+import { getAllCategories, getAllBrands } from '@/api/product'
 
 import {
   getProductPage,
@@ -702,27 +711,22 @@ import {
   addProduct,
   updateProduct,
   getProductStatistics,
-  getProductImages,
-  getProductResources,
-  exportAllProductsExcel,
-  exportProductsExcel,
-  exportProductsCSV,
-  downloadExportFile
+  getProductResources
 } from '@/api/product'
-import { getCategoryLevel1List, getCategoryLevel2ListByLevel1Id, getCategoryLevel3ListByLevel2Id } from '@/api/category'
-import type { Product, CategoryLevel1Code, CategoryLevel2Code, CategoryLevel3Code, ProductResources, ResourceFile } from '@/types'
+import { getCategoryLevel1List, getCategoryLevel2ListByLevel1Id } from '@/api/category'
+import type { Product, CategoryLevel1Code, CategoryLevel2Code, ProductResources, ResourceFile } from '@/types'
 
 const route = useRoute()
 
-// ================= 新增：智能解析选中的分类层级 =================
-const groupBy = (array: any[], key: string) => {
-  return array.reduce((result, currentValue) => {
-    const groupKey = String(currentValue[key])
-    ;(result[groupKey] = result[groupKey] || []).push(currentValue)
-    return result
-  }, {} as Record<string, any[]>)
-}
+// 🌟 核心状态控制：增加导出中和取消导出的标志
+const isExporting = ref(false);
+const cancelExportFlag = ref(false);
 
+const handleCancelExport = () => {
+  cancelExportFlag.value = true;
+};
+
+// ================= 新增：智能解析选中的分类层级 =================
 const parseSelectedCategories = () => {
   const result = {
     categoryLevel1Id: [] as number[],
@@ -776,14 +780,15 @@ const tempSelectedCategories = ref<number[]>([])
 const level1Categories = ref<CategoryLevel1Code[]>([])
 const editLevel2Categories = ref<CategoryLevel2Code[]>([])
 
+const brandOptions = ref<string[]>([])
+
 const searchForm = reactive({
   productCode: '',
-  brand: '',
+  brands: [] as string[],
   model: '',
   categoryLevel1Id: undefined as number | undefined,
   categoryLevel2Id: undefined as number | undefined,
   categoryLevel3Id: undefined as number | undefined,
-
   hasImage: undefined as boolean | undefined,
   minStock: undefined as number | undefined,
   maxStock: undefined as number | undefined,
@@ -826,46 +831,54 @@ const editingProduct = reactive<Product>({
 })
 
 const productRules = {
-  productCode: [
-    { required: true, message: '请输入产品编号', trigger: 'blur' }
-  ],
-  categoryLevel1Id: [
-    { required: true, message: '请选择一级分类', trigger: 'change' }
-  ],
-  categoryLevel2Id: [
-    { required: true, message: '请选择二级分类', trigger: 'change' }
-  ]
+  productCode: [{ required: true, message: '请输入产品编号', trigger: 'blur' }],
+  categoryLevel1Id: [{ required: true, message: '请选择一级分类', trigger: 'change' }],
+  categoryLevel2Id: [{ required: true, message: '请选择二级分类', trigger: 'change' }]
+}
+
+const buildBaseQueryParams = (isBatchMode: boolean, productCodeParam: string) => {
+  const parsedCategoryParams = parseSelectedCategories()
+  const formatParam = (arr: number[], formVal: number | undefined) => {
+    if (arr && arr.length > 0) return arr.join(',')
+    return formVal ? String(formVal) : undefined
+  }
+  return {
+    current: isBatchMode ? 1 : pagination.current,
+    size: pagination.size,
+    productCode: productCodeParam,
+    brand: searchForm.brands.length > 0 ? searchForm.brands.join(',') : undefined,
+    model: searchForm.model,
+    categoryLevel1Id: formatParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
+    categoryLevel2Id: formatParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
+    categoryLevel3Id: formatParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
+    hasImage: searchForm.hasImage,
+    minStock: searchForm.minStock,
+    maxStock: searchForm.maxStock,
+    matchAny: searchForm.matchAny
+  }
 }
 
 const fetchData = async () => {
   loading.value = true
   try {
-    const parsedCategoryParams = parseSelectedCategories()
+    let productCodeParam = searchForm.productCode
+    let isBatchMode = false
+    let allCodes: string[] = []
 
-    const formatParam = (arr: number[], formVal: number | undefined) => {
-      if (arr && arr.length > 0) return arr.join(',')
-      return formVal ? String(formVal) : undefined
+    if (searchForm.productCode) {
+      allCodes = Array.from(new Set(searchForm.productCode.split(/[\n\r,\s]+/).map(c => c.trim()).filter(Boolean)))
+      if (allCodes.length > pagination.size) {
+        isBatchMode = true
+        const start = (pagination.current - 1) * pagination.size
+        productCodeParam = allCodes.slice(start, start + pagination.size).join('\n')
+        pagination.total = allCodes.length
+      }
     }
 
-    const params = {
-      current: pagination.current,
-      size: pagination.size,
-      productCode: searchForm.productCode,
-      brand: searchForm.brand,
-      model: searchForm.model,
-      categoryLevel1Id: formatParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
-      categoryLevel2Id: formatParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
-      categoryLevel3Id: formatParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
-
-      hasImage: searchForm.hasImage,
-      minStock: searchForm.minStock,
-      maxStock: searchForm.maxStock,
-      matchAny: searchForm.matchAny
-    }
-    console.log('调用产品搜索API，参数:', params)
+    const params = buildBaseQueryParams(isBatchMode, productCodeParam)
     const result = await getProductPage(params)
     tableData.value = result.records
-    pagination.total = result.total
+    if (!isBatchMode) pagination.total = result.total
   } catch (error) {
     console.error('获取产品数据失败:', error)
     message.error('获取产品数据失败')
@@ -874,12 +887,236 @@ const fetchData = async () => {
   }
 }
 
+const handleExportMenuClick = async ({ key }: { key: string }) => {
+  if (isExporting.value || loading.value) return;
+  let exportType: 'xlsx' | 'csv' = key.includes('excel') ? 'xlsx' : 'csv';
+  let isExportAll = key === 'excel-all';
+  startFrontendStreamExport(exportType, isExportAll);
+}
+
+const startFrontendStreamExport = async (format: 'xlsx' | 'csv', isAll: boolean) => {
+  loading.value = true;
+  isExporting.value = true;
+  cancelExportFlag.value = false;
+
+  const msgKey = 'export-progress-modal';
+  message.loading({ content: `正在准备导出 ${format.toUpperCase()} 任务...`, key: msgKey, duration: 0 });
+
+  let worksheet: XLSX.WorkSheet | null = null;
+  let csvRows: string[] = [];
+  let totalExportedCount = 0;
+  let isFirstChunk = true;
+
+  try {
+    const parsedCategoryParams = parseSelectedCategories();
+    const formatParam = (arr: number[], formVal: number | undefined) => {
+      if (arr && arr.length > 0) return arr.join(',');
+      return formVal ? String(formVal) : undefined;
+    };
+
+    let allCodes: string[] = [];
+    if (!isAll && searchForm.productCode) {
+      allCodes = Array.from(new Set(searchForm.productCode.split(/[\n\r,\s]+/).map(c => c.trim()).filter(Boolean)));
+    }
+    const isBatchCodeMode = allCodes.length > 0;
+
+    const exportBatchSize = 2000; // 安全分批大小
+    let currentPage = 1;
+    let hasMoreData = true;
+    let totalRecords = isBatchCodeMode ? allCodes.length : 0;
+    let currentCodeIndex = 0;
+
+    while (hasMoreData) {
+      if (cancelExportFlag.value) {
+        message.warning({ content: '已手动中止导出任务！即将为您打包已获取的数据...', key: msgKey, duration: 3 });
+        break;
+      }
+
+      let params: any = {};
+      if (isBatchCodeMode) {
+        const chunkCodes = allCodes.slice(currentCodeIndex, currentCodeIndex + exportBatchSize).join('\n');
+        params = {
+          current: 1,
+          size: exportBatchSize,
+          productCode: chunkCodes,
+          brand: searchForm.brands.length > 0 ? searchForm.brands.join(',') : undefined,
+          model: searchForm.model,
+          categoryLevel1Id: formatParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
+          categoryLevel2Id: formatParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
+          categoryLevel3Id: formatParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
+          hasImage: searchForm.hasImage,
+          minStock: searchForm.minStock,
+          maxStock: searchForm.maxStock,
+          matchAny: searchForm.matchAny
+        };
+      } else {
+        params = {
+          current: currentPage,
+          size: exportBatchSize,
+          productCode: isAll ? undefined : searchForm.productCode,
+          brand: isAll ? undefined : (searchForm.brands.length > 0 ? searchForm.brands.join(',') : undefined),
+          model: isAll ? undefined : searchForm.model,
+          categoryLevel1Id: isAll ? undefined : formatParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
+          categoryLevel2Id: isAll ? undefined : formatParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
+          categoryLevel3Id: isAll ? undefined : formatParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
+          hasImage: isAll ? undefined : searchForm.hasImage,
+          minStock: isAll ? undefined : searchForm.minStock,
+          maxStock: isAll ? undefined : searchForm.maxStock,
+          matchAny: isAll ? false : searchForm.matchAny
+        };
+      }
+
+      const result = await getProductPage(params);
+      const records = result.records || [];
+      if (!isBatchCodeMode) totalRecords = result.total || 0;
+
+      if (records.length === 0) {
+        hasMoreData = false;
+        break;
+      }
+
+      const formattedRecords = records.map((p: any) => formatProductForExport(p));
+
+      if (format === 'csv') {
+        const headers = Object.keys(formattedRecords[0]);
+        if (isFirstChunk) {
+          csvRows.push('\ufeff' + headers.join(','));
+        }
+        formattedRecords.forEach(row => {
+          csvRows.push(headers.map(header => {
+            let cell = row[header] === null || row[header] === undefined ? "" : String(row[header]);
+            if (cell.includes(",") || cell.includes('"') || cell.includes("\n") || cell.includes("\r")) {
+              cell = `"${cell.replace(/"/g, '""')}"`;
+            }
+            return cell;
+          }).join(','));
+        });
+      } else {
+        if (isFirstChunk) {
+          worksheet = XLSX.utils.json_to_sheet(formattedRecords);
+        } else {
+          XLSX.utils.sheet_add_json(worksheet, formattedRecords, { skipHeader: true, origin: -1 });
+        }
+      }
+
+      totalExportedCount += formattedRecords.length;
+      isFirstChunk = false;
+
+      const percent = totalRecords > 0 ? Math.floor(((isBatchCodeMode ? currentCodeIndex + exportBatchSize : totalExportedCount) / totalRecords) * 100) : 100;
+      message.loading({
+        content: `正在打包数据... 进度: ${percent > 100 ? 100 : percent}% (已处理 ${totalExportedCount} 条)`,
+        key: msgKey,
+        duration: 0
+      });
+
+      if (isBatchCodeMode) {
+        currentCodeIndex += exportBatchSize;
+        if (currentCodeIndex >= allCodes.length) hasMoreData = false;
+      } else {
+        if (totalExportedCount >= totalRecords || records.length < exportBatchSize) {
+          hasMoreData = false;
+        } else {
+          currentPage++;
+        }
+      }
+    }
+
+    if (totalExportedCount === 0) {
+      message.warning({ content: '未查询到数据', key: msgKey, duration: 3 });
+      loading.value = false;
+      isExporting.value = false;
+      return;
+    }
+
+    message.loading({ content: '正在生成最终文件，请稍候...', key: msgKey, duration: 0 });
+
+    setTimeout(() => {
+      const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const filename = `产品导出_${timestamp}.${format}`;
+
+      if (format === 'csv') {
+        const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "产品数据");
+        XLSX.writeFile(workbook, filename);
+      }
+
+      message.success({ content: `成功导出 ${totalExportedCount} 条数据`, key: msgKey, duration: 3 });
+      loading.value = false;
+      isExporting.value = false;
+    }, 300);
+
+  } catch (error) {
+    console.error("导出出错:", error);
+    message.error({ content: "导出失败，请检查网络或后端状态", key: msgKey, duration: 5 });
+    loading.value = false;
+    isExporting.value = false;
+  }
+};
+
+const formatProductForExport = (p: any) => {
+  const intro = `${p.model || ''} ${p.packageName || ''} ${p.categoryLevel3CustomName || ''} ${p.categoryLevel2CustomName || ''} ${p.categoryLevel1CustomName || ''}`.trim().replace(/\s+/g, ' ');
+
+  let imgUrl = p.productImageUrlBig || p.shopNoImageUrl || 'https://assets.lcsc.com/images/no-image.jpg';
+
+  return {
+    "产品编号": p.productCode || '',
+    "型号": p.model || '',
+    "品牌": p.brand || '',
+    "封装": p.packageName || '',
+    "简介": intro,
+    "库存数量": p.totalStockQuantity || 0,
+    "一级分类名称": p.categoryLevel1Name || '',
+    "二级分类名称": p.categoryLevel2Name || '',
+    "三级分类名称": p.categoryLevel3Name || '',
+    "图片名称": p.imageName || '',
+    "主图URL": `:1:0|${imgUrl}`,
+    "PDF URL": p.pdfUrl || '',
+    "阶梯价1_数量": p.ladderPrice1Quantity || '',
+    "阶梯价1_价格": p.ladderPrice1Price || '',
+    "阶梯价2_数量": p.ladderPrice2Quantity || '',
+    "阶梯价2_价格": p.ladderPrice2Price || '',
+    "阶梯价3_数量": p.ladderPrice3Quantity || '',
+    "阶梯价3_价格": p.ladderPrice3Price || '',
+    "阶梯价4_数量": p.ladderPrice4Quantity || '',
+    "阶梯价4_价格": p.ladderPrice4Price || '',
+    "阶梯价5_数量": p.ladderPrice5Quantity || '',
+    "阶梯价5_价格": p.ladderPrice5Price || '',
+    "阶梯价6_数量": p.ladderPrice6Quantity || '',
+    "阶梯价6_价格": p.ladderPrice6Price || '',
+    "宝贝描述": formatBabyDescriptionHtml(p.parametersText),
+    "额外参数": p.parametersText || ''
+  }
+}
+
+const formatBabyDescriptionHtml = (parametersText: string) => {
+  if (!parametersText) return "";
+  let html = `<span style="color:#E53333;"><h1>主要参数: <br />`;
+  const params = parametersText.split(/\s+/);
+  for (const param of params) {
+    if (param.includes(":")) {
+      const kv = param.split(":");
+      if (kv.length >= 2) {
+        html += `${kv[0].trim()} : ${kv[1].trim()}<br />`;
+      }
+    }
+  }
+  html += `</h1></span>`;
+  return html;
+}
+
 const loadAllCategoriesForSelector = async () => {
   try {
     const data = await getAllCategories()
     if (data && data.length > 0) {
       let mappedData = data.map((item: any) => {
-
         let trueId = item.id;
         if (!trueId) {
           if (item.categoryLevel === 'level3') {
@@ -890,21 +1127,17 @@ const loadAllCategoriesForSelector = async () => {
             trueId = item.categoryLevel1Id;
           }
         }
-
         let offsetId = trueId;
         if (item.categoryLevel === 'level3') {
           offsetId = trueId + 2000000000;
         } else if (item.categoryLevel === 'level2' || item.isPureLevel2) {
           offsetId = trueId + 1000000000;
         }
-
         return {
           id: offsetId,
           rawId: trueId,
           name: item.categoryName || item.categoryLevel3Name || item.categoryLevel2Name,
-
           level2Id: item.categoryLevel2Id ? item.categoryLevel2Id + 1000000000 : null,
-
           level2Name: item.categoryLevel2Name,
           level1Id: item.categoryLevel1Id,
           level1Name: item.categoryLevel1Name || `L1-${item.categoryLevel1Id}`,
@@ -912,23 +1145,19 @@ const loadAllCategoriesForSelector = async () => {
           isPureLevel2: item.categoryLevel === 'level2'
         };
       })
-
       mappedData.sort((a, b) => {
         const l1A = String(a.level1Name || '')
         const l1B = String(b.level1Name || '')
         const l1Compare = l1A.localeCompare(l1B, 'en')
         if (l1Compare !== 0) return l1Compare
-
         const l2A = String(a.level2Name || '')
         const l2B = String(b.level2Name || '')
         const l2Compare = l2A.localeCompare(l2B, 'en')
         if (l2Compare !== 0) return l2Compare
-
         const nA = String(a.name || '')
         const nB = String(b.name || '')
         return nA.localeCompare(nB, 'en')
       })
-
       allCategories.value = mappedData
     }
   } catch (error) {
@@ -973,12 +1202,22 @@ const loadCategories = async () => {
 const handleEditLevel1Change = async (categoryLevel1Id: number | undefined) => {
   editingProduct.categoryLevel2Id = 0
   editLevel2Categories.value = []
-
   if (categoryLevel1Id) {
     try {
       editLevel2Categories.value = await getCategoryLevel2ListByLevel1Id(categoryLevel1Id)
     } catch (error) {
       console.error('获取二级分类失败:', error)
+    }
+  }
+}
+
+const handleBrandPaste = (e: ClipboardEvent) => {
+  e.preventDefault()
+  const text = e.clipboardData?.getData('text')
+  if (text) {
+    const pastedBrands = text.split(/[\n\r,\t]+/).map(b => b.trim()).filter(Boolean)
+    if (pastedBrands.length > 0) {
+      searchForm.brands = Array.from(new Set([...(searchForm.brands || []), ...pastedBrands]))
     }
   }
 }
@@ -990,17 +1229,15 @@ const handleSearch = () => {
 
 const handleReset = () => {
   searchForm.productCode = ''
-  searchForm.brand = ''
+  searchForm.brands = []
   searchForm.model = ''
   searchForm.categoryLevel1Id = undefined
   searchForm.categoryLevel2Id = undefined
   searchForm.categoryLevel3Id = undefined
-
   searchForm.hasImage = undefined
   searchForm.minStock = undefined
   searchForm.maxStock = undefined
   searchForm.matchAny = false
-
   clearSelectedCategories()
   pagination.current = 1
   fetchData()
@@ -1008,7 +1245,6 @@ const handleReset = () => {
 
 const handleEdit = async (row: Product) => {
   Object.assign(editingProduct, row)
-
   if (row.categoryLevel1Id) {
     try {
       editLevel2Categories.value = await getCategoryLevel2ListByLevel1Id(row.categoryLevel1Id)
@@ -1016,16 +1252,13 @@ const handleEdit = async (row: Product) => {
       console.error('获取二级分类失败:', error)
     }
   }
-
   showAddDialog.value = true
 }
 
 const handleSaveProduct = async () => {
   if (!productFormRef.value) return
-
   try {
     await productFormRef.value.validate()
-
     if (editingProduct.id) {
       await updateProduct(editingProduct.id, editingProduct)
       message.success('更新产品成功')
@@ -1033,7 +1266,6 @@ const handleSaveProduct = async () => {
       await addProduct(editingProduct)
       message.success('新增产品成功')
     }
-
     showAddDialog.value = false
     resetEditingProduct()
     fetchData()
@@ -1087,9 +1319,7 @@ const handleCrawl = async (productCode: string) => {
   try {
     await crawlProduct(productCode)
     message.success('开始爬取产品信息')
-    setTimeout(() => {
-      fetchData()
-    }, 5000)
+    setTimeout(() => { fetchData() }, 5000)
   } catch (error) {
     message.error('爬取失败')
   }
@@ -1099,12 +1329,7 @@ const handleViewResources = async (productCode: string) => {
   try {
     currentProductCode.value = productCode
     const resources = await getProductResources(productCode)
-    productResources.value = resources || {
-      all: [],
-      images: [],
-      pdfs: [],
-      total: 0
-    }
+    productResources.value = resources || { all: [], images: [], pdfs: [], total: 0 }
     activeResourceTab.value = 'all'
     showResourcesDialog.value = true
   } catch (error) {
@@ -1150,20 +1375,15 @@ const handleCrawlerSubmit = async () => {
       await crawlProduct(crawlerForm.productCode)
       message.success('开始爬取单个产品')
     }
-
     if (crawlerForm.batchCodes) {
       const codes = crawlerForm.batchCodes.split('\n').filter(code => code.trim())
       await crawlProductBatch(codes)
       message.success(`开始批量爬取 ${codes.length} 个产品`)
     }
-
     showCrawlerDialog.value = false
     crawlerForm.productCode = ''
     crawlerForm.batchCodes = ''
-
-    setTimeout(() => {
-      fetchData()
-    }, 5000)
+    setTimeout(() => { fetchData() }, 5000)
   } catch (error) {
     message.error('爬取失败')
   }
@@ -1202,86 +1422,24 @@ const handleImagePreview = (imageUrl: string) => {
   showImagePreview.value = true
 }
 
-const handleExportMenuClick = async ({ key }: { key: string }) => {
-  loading.value = true
-
-  try {
-    let response: any
-    const parsedCategoryParams = parseSelectedCategories()
-
-    const getArrayParam = (arr: number[], formVal: number | undefined) => {
-      if (arr && arr.length > 0) return arr;
-      if (formVal) return [formVal];
-      return undefined;
-    }
-
-    const exportParams = {
-      categoryLevel1Id: getArrayParam(parsedCategoryParams.categoryLevel1Id, searchForm.categoryLevel1Id),
-      categoryLevel2Id: getArrayParam(parsedCategoryParams.categoryLevel2Id, searchForm.categoryLevel2Id),
-      categoryLevel3Id: getArrayParam(parsedCategoryParams.categoryLevel3Id, searchForm.categoryLevel3Id),
-
-      brand: searchForm.brand ? searchForm.brand.trim() : undefined,
-      productCode: searchForm.productCode ? searchForm.productCode.trim() : undefined,
-      model: searchForm.model ? searchForm.model.trim() : undefined,
-      hasImage: searchForm.hasImage,
-      minStock: searchForm.minStock,
-      maxStock: searchForm.maxStock,
-      matchAny: searchForm.matchAny
-    }
-
-    console.log('📤 最终极干净参数:', exportParams);
-
-    switch (key) {
-      case 'excel-all': response = await exportAllProductsExcel(); break
-      case 'excel-current': response = await exportProductsExcel(exportParams); break
-      case 'csv-current': response = await exportProductsCSV(exportParams); break
-      default: return
-    }
-
-    const actualData = response?.data?.message ? response.data : (response || {})
-
-    if (actualData.success === false || actualData.code === 500) {
-      message.error(`后端报错: ${actualData.message || '未知异常'}`)
-      return
-    }
-
-    const targetPath = actualData.filePath
-        || actualData.filepath
-        || actualData.filename
-        || actualData.fileName
-        || actualData.path
-        || actualData.url;
-
-    if (targetPath) {
-      const recordCount = actualData.recordCount || 0
-      message.success(`导出成功！共 ${recordCount} 条记录，正在准备下载...`)
-
-      setTimeout(() => {
-        downloadExportFile(targetPath)
-      }, 500)
-    } else {
-      message.error(`找不到文件信息！抓取到的数据: ${JSON.stringify(actualData)}`, 8)
-    }
-
-  } catch (error) {
-    console.error('导出异常:', error)
-    message.error('请求发送失败，请检查网络')
-  } finally {
-    loading.value = false
-  }
-}
-
 onMounted(async () => {
   const categoryLevel2Id = route.query.categoryLevel2Id
   if (categoryLevel2Id) {
     const categoryId = Number(categoryLevel2Id)
     if (!isNaN(categoryId)) {
       searchForm.categoryLevel2Id = categoryId
-      console.log('从URL读取到分类参数:', categoryId)
     }
   }
 
   await loadCategories()
+  try {
+    const res: any = await getAllBrands()
+    let list: any[] = []
+    if (Array.isArray(res)) list = res
+    else if (res?.data && Array.isArray(res.data)) list = res.data
+    else if (res?.data?.data && Array.isArray(res.data.data)) list = res.data.data
+    brandOptions.value = list.filter(Boolean).map(String)
+  } catch (e) { }
 
   if (searchForm.categoryLevel2Id) {
     try {
@@ -1296,7 +1454,6 @@ onMounted(async () => {
         const found = level2List.find(cat => cat.id === searchForm.categoryLevel2Id)
         if (found) {
           searchForm.categoryLevel1Id = level1Categories.value[i].id
-          console.log('自动设置一级分类:', level1Categories.value[i].id)
           break
         }
       }
@@ -1308,7 +1465,6 @@ onMounted(async () => {
   fetchData()
 })
 </script>
-
 <style scoped>
 .product-management {
   padding: 0;

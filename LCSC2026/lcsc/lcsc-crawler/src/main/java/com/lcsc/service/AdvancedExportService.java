@@ -82,10 +82,17 @@ public class AdvancedExportService {
         List<Product> products = queryProductsByRequest(request);
         log.info("查询到 {} 个符合条件的产品", products.size());
 
-        // 2. 查询店铺信息
-        Shop shop = shopMapper.selectById(request.getShopId());
-        if (shop == null) {
-            throw new RuntimeException("店铺不存在: " + request.getShopId());
+        // 2. 查询店铺信息（通用模式 shopId=0 时跳过）
+        final String shopName;
+        final Integer shopId = request.getShopId();
+        if (shopId != null && shopId != 0) {
+            Shop shop = shopMapper.selectById(shopId);
+            if (shop == null) {
+                throw new RuntimeException("店铺不存在: " + shopId);
+            }
+            shopName = shop.getShopName();
+        } else {
+            shopName = "通用";
         }
 
         // 3. 转换为任务项
@@ -94,8 +101,8 @@ public class AdvancedExportService {
             task.setProductCode(product.getProductCode());
             task.setModel(product.getModel());
             task.setBrand(product.getBrand());
-            task.setShopId(shop.getId());
-            task.setShopName(shop.getShopName());
+            task.setShopId(shopId != null ? shopId : 0);
+            task.setShopName(shopName);
             task.setDiscounts(request.getDiscounts());
             task.setAddedAt(System.currentTimeMillis());
             return task;
@@ -126,6 +133,11 @@ public class AdvancedExportService {
      * @param tasks 任务列表
      * @return CSV文件字节数组
      */
+    /**
+     * 生成淘宝CSV文件 (分批次处理，流式写入防 OOM)
+     * @param tasks 任务列表
+     * @return CSV文件字节数组
+     */
     public byte[] generateTaobaoCsv(List<ExportTaskItem> tasks) throws IOException {
         log.info("开始生成淘宝CSV文件, 任务数量: {}", tasks.size());
 
@@ -133,95 +145,27 @@ public class AdvancedExportService {
             return new byte[0];
         }
 
-        // 查询所有店铺信息
+        // 查询所有非通用店铺信息
         Set<Integer> shopIds = tasks.stream()
                 .map(ExportTaskItem::getShopId)
+                .filter(id -> id != null && id != 0)
                 .collect(Collectors.toSet());
 
-        List<Shop> shops = shopMapper.selectBatchIds(shopIds);
-        Map<Integer, Shop> shopMap = shops.stream()
-                .collect(Collectors.toMap(Shop::getId, s -> s));
+        Map<Integer, Shop> shopMap = shopIds.isEmpty() ? new HashMap<>() :
+                shopMapper.selectBatchIds(shopIds).stream().collect(Collectors.toMap(Shop::getId, s -> s));
 
-        // 构建CSV内容
-        StringBuilder csv = new StringBuilder();
-        appendCsvHeader(csv);
+        // 🌟 核心优化：使用 ByteArrayOutputStream 替代 StringBuilder 进行流式写入
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            // 构建临时 StringBuilder 仅用于处理表头和当前批次的行
+            outputStream.write(new byte[] { (byte) 0xEF, (byte) 0xBB, (byte) 0xBF });
+            StringBuilder csvBatch = new StringBuilder();
 
-        // 🌟 性能优化：将几十万的任务分批拉取数据库，不让内存爆炸
-        for (int i = 0; i < tasks.size(); i += BATCH_SIZE) {
-            List<ExportTaskItem> batchTasks = tasks.subList(i, Math.min(i + BATCH_SIZE, tasks.size()));
+            // 写入表头
+            appendCsvHeader(csvBatch);
+            outputStream.write(csvBatch.toString().getBytes(StandardCharsets.UTF_8));
+            csvBatch.setLength(0); // 清空以便复用
 
-            Set<String> productCodes = batchTasks.stream()
-                    .map(ExportTaskItem::getProductCode)
-                    .collect(Collectors.toSet());
-
-            List<Product> products = productMapper.selectList(
-                    new LambdaQueryWrapper<Product>()
-                            .in(Product::getProductCode, productCodes)
-            );
-
-            enrichCategoryNames(products);
-            Map<String, Product> productMap = products.stream()
-                    .collect(Collectors.toMap(Product::getProductCode, p -> p));
-
-            // 按需查本批次要用的图，不再全部装载进内存
-            Set<String> neededImageNames = products.stream()
-                    .map(Product::getImageName)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet());
-            neededImageNames.add("no-image.jpg");
-            Map<String, Map<Integer, String>> imageLinkMap = loadImageLinksByNames(neededImageNames);
-
-            for (ExportTaskItem task : batchTasks) {
-                Product product = productMap.get(task.getProductCode());
-                if (product == null) {
-                    continue;
-                }
-                Shop shop = shopMap.get(task.getShopId());
-                if (shop == null) {
-                    continue;
-                }
-                appendProductRow(csv, product, shop, task, imageLinkMap);
-            }
-        }
-
-        log.info("淘宝CSV文件生成完成");
-        return csv.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    /**
-     * 生成淘宝Excel文件 (SXSSFWorkbook 流式写入防 OOM)
-     * @param tasks 任务列表
-     * @return Excel文件字节数组
-     */
-    public byte[] generateTaobaoExcel(List<ExportTaskItem> tasks) throws IOException {
-        log.info("开始生成淘宝Excel文件, 任务数量: {}", tasks.size());
-
-        if (tasks == null || tasks.isEmpty()) {
-            return new byte[0];
-        }
-
-        // 查询所有店铺信息
-        Set<Integer> shopIds = tasks.stream()
-                .map(ExportTaskItem::getShopId)
-                .collect(Collectors.toSet());
-
-        List<Shop> shops = shopMapper.selectBatchIds(shopIds);
-        Map<Integer, Shop> shopMap = shops.stream()
-                .collect(Collectors.toMap(Shop::getId, s -> s));
-
-        // 🌟 性能优化：换用 SXSSFWorkbook，内存只保留最新 1000 行，旧行自动刷盘！
-        try (SXSSFWorkbook workbook = new SXSSFWorkbook(1000);
-             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-
-            workbook.setCompressTempFiles(true); // 压缩硬盘产生的临时文件
-            Sheet sheet = workbook.createSheet("淘宝导入");
-
-            // 创建表头（第1-3行）
-            createExcelHeader(sheet);
-
-            int rowIndex = 3;
-
-            // 🌟 性能优化：分批次查询，不撑爆数据库连接池和内存
+            // 分批处理数据
             for (int i = 0; i < tasks.size(); i += BATCH_SIZE) {
                 List<ExportTaskItem> batchTasks = tasks.subList(i, Math.min(i + BATCH_SIZE, tasks.size()));
 
@@ -238,7 +182,6 @@ public class AdvancedExportService {
                 Map<String, Product> productMap = products.stream()
                         .collect(Collectors.toMap(Product::getProductCode, p -> p));
 
-                // 同样按需查图片
                 Set<String> neededImageNames = products.stream()
                         .map(Product::getImageName)
                         .filter(Objects::nonNull)
@@ -248,24 +191,103 @@ public class AdvancedExportService {
 
                 for (ExportTaskItem task : batchTasks) {
                     Product product = productMap.get(task.getProductCode());
-                    if (product == null) {
-                        continue;
+                    if (product == null) continue;
+                    boolean isGeneric = task.getShopId() == null || task.getShopId() == 0;
+                    if (isGeneric) {
+                        appendProductRowGeneric(csvBatch, product, task);
+                    } else {
+                        Shop shop = shopMap.get(task.getShopId());
+                        if (shop == null) continue;
+                        appendProductRow(csvBatch, product, shop, task, imageLinkMap);
                     }
-                    Shop shop = shopMap.get(task.getShopId());
-                    if (shop == null) {
-                        continue;
+                }
+
+                // 🌟 核心优化：每处理完一个批次，就写入底层的 ByteArrayOutputStream，并清空 StringBuilder
+                // 这样内存中永远只会保留一个 BATCH_SIZE (比如 1000 条) 大小的字符串数据，极大节省内存
+                outputStream.write(csvBatch.toString().getBytes(StandardCharsets.UTF_8));
+                csvBatch.setLength(0);
+
+                // 建议：如果你要导出几十万，这里还可以加上手动触发 GC 或者让线程稍微休眠的逻辑，目前这一步已经足够解决绝大部分问题。
+            }
+
+            log.info("淘宝CSV文件生成完成");
+            return outputStream.toByteArray();
+        }
+    }
+
+    /**
+     * 生成淘宝Excel文件 (SXSSFWorkbook 流式写入防 OOM)
+     * @param tasks 任务列表
+     * @return Excel文件字节数组
+     */
+    public byte[] generateTaobaoExcel(List<ExportTaskItem> tasks) throws IOException {
+        log.info("开始生成淘宝Excel文件, 任务数量: {}", tasks.size());
+
+        if (tasks == null || tasks.isEmpty()) {
+            return new byte[0];
+        }
+
+        // 查询所有非通用店铺信息
+        Set<Integer> shopIds = tasks.stream()
+                .map(ExportTaskItem::getShopId)
+                .filter(id -> id != null && id != 0)
+                .collect(Collectors.toSet());
+
+        Map<Integer, Shop> shopMap = shopIds.isEmpty() ? new HashMap<>() :
+                shopMapper.selectBatchIds(shopIds).stream().collect(Collectors.toMap(Shop::getId, s -> s));
+
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(1000);
+             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+
+            workbook.setCompressTempFiles(true);
+            Sheet sheet = workbook.createSheet("淘宝导入");
+            createExcelHeader(sheet);
+
+            int rowIndex = 3;
+
+            for (int i = 0; i < tasks.size(); i += BATCH_SIZE) {
+                List<ExportTaskItem> batchTasks = tasks.subList(i, Math.min(i + BATCH_SIZE, tasks.size()));
+
+                Set<String> productCodes = batchTasks.stream()
+                        .map(ExportTaskItem::getProductCode)
+                        .collect(Collectors.toSet());
+
+                List<Product> products = productMapper.selectList(
+                        new LambdaQueryWrapper<Product>()
+                                .in(Product::getProductCode, productCodes)
+                );
+
+                enrichCategoryNames(products);
+                Map<String, Product> productMap = products.stream()
+                        .collect(Collectors.toMap(Product::getProductCode, p -> p));
+
+                Set<String> neededImageNames = products.stream()
+                        .map(Product::getImageName)
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toSet());
+                neededImageNames.add("no-image.jpg");
+                Map<String, Map<Integer, String>> imageLinkMap = loadImageLinksByNames(neededImageNames);
+
+                for (ExportTaskItem task : batchTasks) {
+                    Product product = productMap.get(task.getProductCode());
+                    if (product == null) continue;
+                    boolean isGeneric = task.getShopId() == null || task.getShopId() == 0;
+                    if (isGeneric) {
+                        createProductRowGeneric(sheet, rowIndex++, product, task);
+                    } else {
+                        Shop shop = shopMap.get(task.getShopId());
+                        if (shop == null) continue;
+                        createProductRow(sheet, rowIndex++, product, shop, task, imageLinkMap);
                     }
-                    createProductRow(sheet, rowIndex++, product, shop, task, imageLinkMap);
                 }
             }
 
-            // 🌟 性能优化：取消极度耗时的 sheet.autoSizeColumn(i)，改为定宽写入
             for (int i = 0; i < 20; i++) {
                 sheet.setColumnWidth(i, 4000);
             }
 
             workbook.write(outputStream);
-            workbook.dispose(); // 清理写入期间创建的临时硬盘文件
+            workbook.dispose();
             log.info("淘宝Excel文件生成完成");
             return outputStream.toByteArray();
         }
@@ -323,7 +345,7 @@ public class AdvancedExportService {
 
         // 7. price: 最高阶价格*折扣
         BigDecimal price = calculatePrice(product, task.getDiscounts());
-        row.createCell(col++).setCellValue(price.doubleValue());
+        row.createCell(col++).setCellValue(price.toPlainString());
 
         // 8. auction_increment: 空
         col++;
@@ -535,6 +557,7 @@ public class AdvancedExportService {
     /**
      * 追加CSV头部（第1-3行）
      */
+
     private void appendCsvHeader(StringBuilder csv) {
         // 第1行：版本信息
         csv.append("version 1.00,Csv由Tbup理货员导出,");
@@ -574,7 +597,7 @@ public class AdvancedExportService {
 
         // 7. price: 最高阶价格*折扣
         BigDecimal price = calculatePrice(product, task.getDiscounts());
-        csv.append(price.toString()).append(",");
+        csv.append(price.toPlainString()).append(",");
 
         // 8. auction_increment: 空
         csv.append(",");
@@ -586,7 +609,8 @@ public class AdvancedExportService {
         csv.append(num).append(",");
 
         // 10-19. valid_thru~list_time
-        csv.append(",,0,0,,1,,0,,");
+        // 修改后（末尾是3个逗号）：
+        csv.append(",,0,0,,1,,0,,,");
 
         // 20. description
         String description = buildDescription(product);
@@ -716,14 +740,20 @@ public class AdvancedExportService {
         return title.toString().trim().replaceAll("\\s+", " ");
     }
 
+    // 🌟🌟 核心逻辑：计算宝贝价格 🌟🌟
+// 🌟🌟 核心逻辑：计算宝贝价格 (取最后一级阶梯价 × 最后一级折扣，保留所有小数位) 🌟🌟
     private BigDecimal calculatePrice(Product product, List<BigDecimal> discounts) {
         BigDecimal minPrice = null;
+        int validLadderCount = 1; // 记录最后一个有效阶梯的索引
+
+        // 遍历找到最低价（即最后一级阶梯价），同时确认有效阶梯数量
         for (int i = 1; i <= 6; i++) {
             BigDecimal price = getLadderPriceByIndex(product, i);
             if (price != null && price.compareTo(BigDecimal.ZERO) > 0) {
                 if (minPrice == null || price.compareTo(minPrice) < 0) {
                     minPrice = price;
                 }
+                validLadderCount = i;
             }
         }
 
@@ -732,15 +762,19 @@ public class AdvancedExportService {
         }
 
         if (discounts == null || discounts.isEmpty()) {
-            return minPrice.setScale(2, RoundingMode.UP);
+            return minPrice; // 保持原精度
         }
 
-        BigDecimal discount = discounts.get(0).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP);
-        BigDecimal result = minPrice.multiply(discount);
+        // 🌟 核心修改：折扣改为【最后一级折扣】
+        // 索引从 0 开始，所以阶梯数减 1
+        int lastDiscountIdx = Math.max(0, validLadderCount - 1);
+        lastDiscountIdx = Math.min(lastDiscountIdx, discounts.size() - 1); // 防越界
 
-        return result.setScale(2, RoundingMode.UP);
+        BigDecimal discount = discounts.get(lastDiscountIdx).divide(new BigDecimal("100"));
+
+        // 最终价格直接相乘，不截断，保留自然小数
+        return minPrice.multiply(discount);
     }
-
     private String buildDescription(Product product) {
         String parametersText = product.getParametersText();
 
@@ -808,6 +842,8 @@ public class AdvancedExportService {
         return ":1:0:|" + imageUrl;
     }
 
+    // 🌟🌟 核心逻辑：生成SKU属性 🌟🌟
+    // 🌟🌟 核心逻辑：生成SKU属性 🌟🌟
     private String buildSkuProps(Product product, List<BigDecimal> discounts, int ladderCount) {
         StringBuilder props = new StringBuilder();
         int totalOptions = ladderCount + 2;
@@ -823,23 +859,33 @@ public class AdvancedExportService {
 
         for (int i = 0; i < totalOptions; i++) {
             BigDecimal price;
+            int discountIdx;
+            int skuStock;
+
             if (i < ladderCount) {
+                // 【正常阶梯：按照实际阶梯取价和取折扣】
                 price = getLadderPriceByIndex(product, i + 1);
+                discountIdx = i;
+                skuStock = stockQty;
             } else {
-                price = getLadderPriceByIndex(product, 1);
+                // 【自定义 SKU：最后两个选项】
+                // 🌟 核心修改：基础价取【最后一级阶梯价】，折扣取【最后一级折扣】
+                price = getLadderPriceByIndex(product, ladderCount);
+                discountIdx = ladderCount - 1; // 改为最后一级折扣
+                skuStock = 1;
             }
 
             if (price == null) {
                 price = BigDecimal.ZERO;
             }
 
-            BigDecimal discount = discounts.get(Math.min(i, discounts.size() - 1))
-                    .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP);
-            BigDecimal finalPrice = price.multiply(discount).setScale(5, RoundingMode.HALF_UP);
+            BigDecimal discount = discounts.get(Math.min(discountIdx, discounts.size() - 1))
+                    .divide(new BigDecimal("100"));
 
-            int skuStock = (i < ladderCount) ? stockQty : 1;
+            // 绝对不进行进位或截断操作
+            BigDecimal finalPrice = price.multiply(discount);
 
-            props.append(finalPrice.toString())
+            props.append(finalPrice.stripTrailingZeros().toPlainString())
                     .append(":")
                     .append(skuStock)
                     .append("::")
@@ -924,6 +970,128 @@ public class AdvancedExportService {
         }
 
         return value;
+    }
+
+    // ==================== 通用模式（shopId=0）行输出 ====================
+
+    /**
+     * 通用模式 CSV 行：C列(seller_cids)=空，W列(postage_id)=空，AC列(picture)=图片名称:1:0:|;
+     */
+
+    private void appendProductRowGeneric(StringBuilder csv, Product product, ExportTaskItem task) {
+        int ladderCount = getLadderCount(product);
+        int stockQty = product.getTotalStockQuantity() != null ? product.getTotalStockQuantity() : 0;
+        int num = (ladderCount * stockQty) + 2;
+        BigDecimal price = calculatePrice(product, task.getDiscounts());
+
+        csv.append(escapeCsv(buildTitle(product))).append(","); // 0. title
+        csv.append(FIXED_CID).append(",");                      // 1. cid
+        csv.append(",");                                         // 2. seller_cids = 空
+        csv.append("0,");                                        // 3. stuff_status
+        csv.append(",,,");                                       // 4-6. 空
+
+        // 🌟 使用 toPlainString() 保持输出字符串精确
+        csv.append(price.toPlainString()).append(",");
+
+        csv.append(",");                                         // 8. 空
+        csv.append(num).append(",");                             // 9. num
+        csv.append(",,0,0,,1,,0,,,");                          // 10-19
+        csv.append(escapeCsv(buildDescription(product))).append(","); // 20. description
+        csv.append(buildCateProps(ladderCount)).append(",");     // 21. cateProps
+        csv.append(",");                                         // 22. postage_id = 空
+        csv.append(",,,,,");                                     // 23-27. 空
+
+        // 🌟 28. picture = 图片名称:1:0:|; (智能去后缀，无图统配 no-image)
+        String imageName = product.getImageName();
+        if (imageName == null || imageName.trim().isEmpty()) {
+            imageName = "no-image"; // 无图产品统一使用 no-image
+        } else if (imageName.contains(".")) {
+            imageName = imageName.substring(0, imageName.lastIndexOf(".")); // 去掉 .jpg 等后缀
+        }
+        csv.append(imageName).append(":1:0:|;").append(",");
+
+        csv.append(",");                                         // 29. video
+        csv.append(escapeCsv(buildSkuProps(product, task.getDiscounts(), ladderCount))).append(","); // 30. skuProps
+        csv.append(",,");                                        // 31-32. 空
+        String outerId = product.getBrand() != null ? product.getBrand().replace("&", " ") : "";
+        csv.append(escapeCsv(outerId)).append(",");              // 33. outer_id
+        csv.append(",");                                         // 34. 空
+        csv.append(",,,,,,,,,,");                               // 35-44. 空
+        csv.append("0,");                                        // 45. buyareatype
+        csv.append(",,");                                        // 46-47. 空
+        csv.append("0,");                                        // 48. sub_stock_type
+        csv.append(",,,,,,,,,,");                               // 49-58. 空
+        csv.append(escapeCsv(buildPropAlias(product, ladderCount))).append(","); // 59. input_custom_cpv
+        csv.append(",,,");                                       // 60-62. 空
+        csv.append("0,");                                        // 63. departure_place
+        csv.append(",,,");                                       // 64-66. 空
+        csv.append("0,");                                        // 67. deliveryTimeType
+        csv.append(",,,,,,,");                                   // 68-74. 空
+        csv.append("1,");                                        // 75. subStock
+        csv.append(",,,,");                                      // 76-79. 空
+        csv.append("\n");
+    }
+
+    /**
+     * 通用模式 Excel 行：C列(seller_cids)=空，W列(postage_id)=空，AC列(picture)=图片名称:1:0:|;
+     */
+    private void createProductRowGeneric(Sheet sheet, int rowIndex, Product product, ExportTaskItem task) {
+        Row row = sheet.createRow(rowIndex);
+        int col = 0;
+        int ladderCount = getLadderCount(product);
+        int stockQty = product.getTotalStockQuantity() != null ? product.getTotalStockQuantity() : 0;
+        int num = (ladderCount * stockQty) + 2;
+
+        row.createCell(col++).setCellValue(buildTitle(product));          // 0. title
+        row.createCell(col++).setCellValue(FIXED_CID);                    // 1. cid
+        col++;                                                             // 2. seller_cids = 空
+        row.createCell(col++).setCellValue(0);                            // 3. stuff_status
+        col += 3;                                                          // 4-6. 空
+
+        // 🌟 同样必须使用 toPlainString()
+        row.createCell(col++).setCellValue(calculatePrice(product, task.getDiscounts()).toPlainString());
+
+        col++;                                                             // 8. 空
+        row.createCell(col++).setCellValue(num);                          // 9. num
+        col += 2;                                                          // 10-11. 空
+        row.createCell(col++).setCellValue(0);                            // 12. post_fee
+        row.createCell(col++).setCellValue(0);                            // 13. ems_fee
+        col++;                                                             // 14. 空
+        row.createCell(col++).setCellValue(1);                            // 15. has_invoice
+        col++;                                                             // 16. 空
+        row.createCell(col++).setCellValue(0);                            // 17. approve_status
+        col += 2;                                                          // 18-19. 空
+        row.createCell(col++).setCellValue(buildDescription(product));    // 20. description
+        row.createCell(col++).setCellValue(buildCateProps(ladderCount));  // 21. cateProps
+        col++;                                                             // 22. postage_id = 空
+        col += 5;                                                          // 23-27. 空
+
+        // 🌟 28. picture = 图片名称:1:0:|; (智能去后缀，无图统配 no-image)
+        String imageName = product.getImageName();
+        if (imageName == null || imageName.trim().isEmpty()) {
+            imageName = "no-image"; // 无图产品统一使用 no-image
+        } else if (imageName.contains(".")) {
+            imageName = imageName.substring(0, imageName.lastIndexOf(".")); // 去掉 .jpg 等后缀
+        }
+        row.createCell(col++).setCellValue(imageName + ":1:0:|;");
+
+        col++;                                                             // 29. video
+        row.createCell(col++).setCellValue(buildSkuProps(product, task.getDiscounts(), ladderCount)); // 30. skuProps
+        col += 2;                                                          // 31-32. 空
+        String outerId = product.getBrand() != null ? product.getBrand().replace("&", " ") : "";
+        row.createCell(col++).setCellValue(outerId);                      // 33. outer_id
+        col += 11;                                                         // 34-44. 空
+        row.createCell(col++).setCellValue(0);                            // 45. buyareatype
+        col += 2;                                                          // 46-47. 空
+        row.createCell(col++).setCellValue(0);                            // 48. sub_stock_type
+        col += 10;                                                         // 49-58. 空
+        row.createCell(col++).setCellValue(buildPropAlias(product, ladderCount)); // 59. input_custom_cpv
+        col += 3;                                                          // 60-62. 空
+        row.createCell(col++).setCellValue(0);                            // 63. departure_place
+        col += 3;                                                          // 64-66. 空
+        row.createCell(col++).setCellValue(0);                            // 67. deliveryTimeType
+        col += 7;                                                          // 68-74. 空
+        row.createCell(col++).setCellValue(1);                            // 75. subStock
     }
 
     // ==================== 填充自定义分类名称 ====================

@@ -113,27 +113,52 @@ public class ProductController {
 
     // --- 产品管理 API ---
 
-    @GetMapping("/products/page")
-    public Result<Map<String, Object>> getProductPage( // <-- 修复了 public Result 的空格
-                                                       @RequestParam(defaultValue = "1") Integer current,
-                                                       @RequestParam(defaultValue = "20") Integer size,
-                                                       @RequestParam(required = false) String productCode,
-                                                       @RequestParam(required = false) String brand,
-                                                       @RequestParam(required = false) String model,
-                                                       @RequestParam(required = false) String packageName,
-                                                       @RequestParam(required = false) List<Integer> categoryLevel1Id,
-                                                       @RequestParam(required = false) List<Integer> categoryLevel2Id,
-                                                       @RequestParam(required = false) List<Integer> categoryLevel3Id,
-                                                       // === 修改这里 ===
-                                                       @RequestParam(required = false) Boolean hasImage,
-                                                       @RequestParam(required = false) Integer minStock,
-                                                       @RequestParam(required = false) Integer maxStock,
-                                                       @RequestParam(required = false) Boolean matchAny// <--- 新增
-    ) {
-        // === 调用也要跟着加参数 ===
+    // --- 产品管理 API ---
+
+    @PostMapping("/products/page") // ✅ 1. 改为 PostMapping
+    public Result<Map<String, Object>> getProductPage(@RequestBody Map<String, Object> params) { // ✅ 2. 使用 @RequestBody 接收大体积 JSON
+
+        // 1. 解析分页参数
+        Integer current = params.get("current") != null ? Integer.valueOf(params.get("current").toString()) : 1;
+        Integer size = params.get("size") != null ? Integer.valueOf(params.get("size").toString()) : 20;
+
+        // 2. 解析基础字符串参数
+        String productCode = (String) params.get("productCode");
+        String brand = (String) params.get("brand");
+        String model = (String) params.get("model");
+        String packageName = (String) params.get("packageName");
+
+        // 3. 复用你写好的 parseCategoryIdList 方法解析分类
+        List<Integer> categoryLevel1Id = parseCategoryIdList(params.get("categoryLevel1Id"));
+        List<Integer> categoryLevel2Id = parseCategoryIdList(params.get("categoryLevel2Id"));
+        List<Integer> categoryLevel3Id = parseCategoryIdList(params.get("categoryLevel3Id"));
+
+        // 4. 解析布尔值和数值
+        Boolean hasImage = null;
+        if (params.get("hasImage") != null && !params.get("hasImage").toString().trim().isEmpty()) {
+            hasImage = Boolean.valueOf(params.get("hasImage").toString());
+        }
+
+        Integer minStock = null;
+        if (params.get("minStock") != null && !params.get("minStock").toString().trim().isEmpty()) {
+            minStock = Integer.valueOf(params.get("minStock").toString());
+        }
+
+        Integer maxStock = null;
+        if (params.get("maxStock") != null && !params.get("maxStock").toString().trim().isEmpty()) {
+            maxStock = Integer.valueOf(params.get("maxStock").toString());
+        }
+
+        Boolean matchAny = false;
+        if (params.get("matchAny") != null && !params.get("matchAny").toString().trim().isEmpty()) {
+            matchAny = Boolean.valueOf(params.get("matchAny").toString());
+        }
+
+        // 5. 调用 Service 层进行查询
         IPage<Product> result = productService.getProductPage(current, size, productCode, brand,
                 model, packageName, categoryLevel1Id,
-                categoryLevel2Id, categoryLevel3Id, hasImage, minStock, maxStock, matchAny); // <-- 补上了 matchAny 参数
+                categoryLevel2Id, categoryLevel3Id, hasImage, minStock, maxStock, matchAny);
+
         return Result.page(result.getRecords(), result.getTotal(), current.longValue(), size.longValue());
     }
     @GetMapping("/products/{id}")
