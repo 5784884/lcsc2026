@@ -27,6 +27,8 @@ export interface ExportTaskItem {
     shopId: number
     shopName: string
     discounts: number[]
+    brandDiscounts1?: number[]
+    brandDiscounts2?: number[]
     addedAt: number
 }
 
@@ -42,6 +44,9 @@ export interface AddTaskRequest {
     stockMax?: number
     matchAny?: boolean
     discounts: number[]
+    brandDiscounts1?: number[]
+    brandDiscounts2?: number[]
+    discountScheme?: number
     currentTasks: ExportTaskItem[]
 }
 

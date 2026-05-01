@@ -23,11 +23,12 @@
                   :max-tag-count="2"
                   :token-separators="[',']"
                   show-search
+                  :filter-option="brandFilterOption"
                   allow-clear
                   style="width: 100%"
                   @paste="handleBrandPaste"
               >
-                <a-select-option v-for="item in brandOptions" :key="item" :value="item">{{ item }}</a-select-option>
+                <a-select-option v-for="item in brandOptions" :key="item.value" :value="item.value">{{ item.label }}</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
@@ -79,6 +80,17 @@
               >
                 <a-select-option :value="true">有图</a-select-option>
                 <a-select-option :value="false">无图</a-select-option>
+              </a-select>
+
+              <a-select
+                  v-model:value="searchForm.discountScheme"
+                  placeholder="折扣方案"
+                  allow-clear
+                  style="width: 120px; margin-right: 12px;"
+              >
+                <a-select-option :value="0">默认折扣</a-select-option>
+                <a-select-option :value="1">品牌折扣</a-select-option>
+                <a-select-option :value="2">立创折扣</a-select-option>
               </a-select>
 
               <a-input-group compact class="compact-group">
@@ -701,7 +713,8 @@ import {
 import * as XLSX from 'xlsx'
 
 import CategoryTreeSelector from '@/components/CategoryTreeSelector.vue'
-import { getAllCategories, getAllBrands } from '@/api/product'
+import { getAllCategories } from '@/api/product'
+import { getBrandOptions } from '@/api/brand'
 
 import {
   getProductPage,
@@ -780,7 +793,7 @@ const tempSelectedCategories = ref<number[]>([])
 const level1Categories = ref<CategoryLevel1Code[]>([])
 const editLevel2Categories = ref<CategoryLevel2Code[]>([])
 
-const brandOptions = ref<string[]>([])
+const brandOptions = ref<Array<{ value: string; label: string }>>([])
 
 const searchForm = reactive({
   productCode: '',
@@ -792,7 +805,8 @@ const searchForm = reactive({
   hasImage: undefined as boolean | undefined,
   minStock: undefined as number | undefined,
   maxStock: undefined as number | undefined,
-  matchAny: false
+  matchAny: false,
+  discountScheme: undefined as number | undefined
 })
 
 const pagination = reactive({
@@ -854,7 +868,8 @@ const buildBaseQueryParams = (isBatchMode: boolean, productCodeParam: string) =>
     hasImage: searchForm.hasImage,
     minStock: searchForm.minStock,
     maxStock: searchForm.maxStock,
-    matchAny: searchForm.matchAny
+    matchAny: searchForm.matchAny,
+    discountScheme: searchForm.discountScheme
   }
 }
 
@@ -1066,10 +1081,13 @@ const formatProductForExport = (p: any) => {
 
   let imgUrl = p.productImageUrlBig || p.shopNoImageUrl || 'https://assets.lcsc.com/images/no-image.jpg';
 
+  const brandOption = brandOptions.value.find(opt => opt.value === p.brand)
+  const brandDisplay = brandOption ? brandOption.label : (p.brand || '')
+
   return {
     "产品编号": p.productCode || '',
     "型号": p.model || '',
-    "品牌": p.brand || '',
+    "品牌": brandDisplay,
     "封装": p.packageName || '',
     "简介": intro,
     "库存数量": p.totalStockQuantity || 0,
@@ -1209,6 +1227,13 @@ const handleEditLevel1Change = async (categoryLevel1Id: number | undefined) => {
       console.error('获取二级分类失败:', error)
     }
   }
+}
+
+const brandFilterOption = (input: string, option: any) => {
+  const val = (option.value || '').toLowerCase()
+  const label = (option.label || option.children?.[0] || '').toString().toLowerCase()
+  const kw = input.toLowerCase()
+  return val.includes(kw) || label.includes(kw)
 }
 
 const handleBrandPaste = (e: ClipboardEvent) => {
@@ -1433,12 +1458,12 @@ onMounted(async () => {
 
   await loadCategories()
   try {
-    const res: any = await getAllBrands()
+    const res: any = await getBrandOptions()
     let list: any[] = []
     if (Array.isArray(res)) list = res
     else if (res?.data && Array.isArray(res.data)) list = res.data
     else if (res?.data?.data && Array.isArray(res.data.data)) list = res.data.data
-    brandOptions.value = list.filter(Boolean).map(String)
+    brandOptions.value = list.filter(Boolean)
   } catch (e) { }
 
   if (searchForm.categoryLevel2Id) {

@@ -10,6 +10,7 @@ import com.lcsc.entity.ImageLink;
 import com.lcsc.service.CategoryLevel1CodeService;
 import com.lcsc.service.CategoryLevel2CodeService;
 import com.lcsc.service.CategoryLevel3CodeService;
+import com.lcsc.service.BrandCustomNameService;
 import com.lcsc.service.ProductService;
 import com.lcsc.service.ImageLinkService;
 import org.apache.poi.ss.usermodel.*;
@@ -46,6 +47,7 @@ public class DataExportService {
     @Autowired private CategoryLevel1CodeService categoryLevel1CodeService;
     @Autowired private CategoryLevel2CodeService categoryLevel2CodeService;
     @Autowired private CategoryLevel3CodeService categoryLevel3CodeService;
+    @Autowired private BrandCustomNameService brandCustomNameService;
 
     // 默认兜底图，防数据库无记录
     private static final String DEFAULT_GLOBAL_NO_IMAGE = "https://assets.lcsc.com/images/no-image.jpg";
@@ -162,6 +164,7 @@ public class DataExportService {
                 int rowNum = 1;
                 long pageNo = 1;
                 int totalExported = 0;
+                Map<String, String> brandCustomMap = brandCustomNameService.getCustomNameMap();
 
                 // 🌟 核心优化 3：分页查库，每次只加载 1000 条，不撑爆内存
                 while (true) {
@@ -181,7 +184,7 @@ public class DataExportService {
 
                     for (Product product : records) {
                         Row row = sheet.createRow(rowNum++);
-                        fillProductRow(row, product, dataStyle);
+                        fillProductRow(row, product, dataStyle, brandCustomMap);
                     }
 
                     totalExported += records.size();
@@ -234,6 +237,7 @@ public class DataExportService {
                     writer.newLine();
 
                     long pageNo = 1;
+                    Map<String, String> brandCustomMap = brandCustomNameService.getCustomNameMap();
                     // 分页查询防止内存溢出
                     while (true) {
                         Page<Product> page = new Page<>(pageNo, BATCH_SIZE);
@@ -251,7 +255,7 @@ public class DataExportService {
                         enrichShopNoImageInfo(records, shopId);
 
                         for (Product product : records) {
-                            writer.write(formatProductToCsv(product));
+                            writer.write(formatProductToCsv(product, brandCustomMap));
                             writer.newLine();
                         }
 
@@ -384,19 +388,21 @@ public class DataExportService {
         if (products == null || products.isEmpty()) {
             return;
         }
-
-        // 🚀 核心优化：彻底干掉对 imageLinkService 的反复查库！
-        // 如果产品的图片URL为空，直接使用系统默认的兜底无图链接，不走数据库，速度提升 100 倍！
         for (Product p : products) {
             String targetUrl = DEFAULT_GLOBAL_NO_IMAGE;
             p.setShopNoImageUrl(targetUrl);
         }
     }
-    private void fillProductRow(Row row, Product product, CellStyle dataStyle) {
+
+    private void fillProductRow(Row row, Product product, CellStyle dataStyle, Map<String, String> brandCustomMap) {
         int cellIndex = 0;
         createCell(row, cellIndex++, product.getProductCode(), dataStyle);
         createCell(row, cellIndex++, product.getModel(), dataStyle);
-        createCell(row, cellIndex++, product.getBrand(), dataStyle);
+
+        // 🌟 已修复：读取品牌显示名称
+        String brandDisplay = resolveBrandName(product.getBrand(), brandCustomMap);
+        createCell(row, cellIndex++, brandDisplay, dataStyle);
+
         createCell(row, cellIndex++, product.getPackageName(), dataStyle);
 
         String intro = String.format("%s %s %s %s %s",
@@ -440,7 +446,7 @@ public class DataExportService {
         createCell(row, cellIndex++, product.getParametersText(), dataStyle);
     }
 
-    private String formatProductToCsv(Product product) {
+    private String formatProductToCsv(Product product, Map<String, String> brandCustomMap) {
         String intro = String.format("%s %s %s %s %s",
                 nvl(product.getModel()),
                 nvl(product.getPackageName()),
@@ -457,10 +463,13 @@ public class DataExportService {
             }
         }
 
+        // 🌟 已修复：读取品牌显示名称
+        String brandDisplay = resolveBrandName(product.getBrand(), brandCustomMap);
+
         return String.join(",",
                 csvEscape(product.getProductCode()),
                 csvEscape(product.getModel()),
-                csvEscape(product.getBrand()),
+                csvEscape(brandDisplay), // 这里已经修改为 brandDisplay
                 csvEscape(product.getPackageName()),
                 csvEscape(intro),
                 csvEscape(product.getTotalStockQuantity()),
@@ -468,7 +477,7 @@ public class DataExportService {
                 csvEscape(product.getCategoryLevel2Name()),
                 csvEscape(product.getCategoryLevel3Name()),
                 csvEscape(product.getImageName()),
-                csvEscape(imgUrl),
+                csvEscape(":1:0|" + imgUrl),
                 csvEscape(product.getPdfUrl()),
                 csvEscape(product.getLadderPrice1Quantity()),
                 csvEscape(product.getLadderPrice1Price()),
@@ -600,6 +609,31 @@ public class DataExportService {
 
     private String nvl(String str) {
         return str == null ? "" : str;
+    }
+
+    // 🌟 强大的忽略大小写、防空白字符匹配
+    private String resolveBrandName(String originalBrand, Map<String, String> customMap) {
+        if (originalBrand == null || originalBrand.trim().isEmpty()) {
+            return originalBrand == null ? "" : originalBrand;
+        }
+        if (customMap != null) {
+            // 1. 先尝试精确匹配
+            String custom = customMap.get(originalBrand);
+            if (custom != null && !custom.trim().isEmpty()) {
+                return custom;
+            }
+
+            // 2. 精确匹配失败，启动忽略大小写和空格的模糊匹配
+            String normalizedOriginal = originalBrand.trim().toLowerCase();
+            for (Map.Entry<String, String> entry : customMap.entrySet()) {
+                if (entry.getKey() != null && entry.getKey().trim().toLowerCase().equals(normalizedOriginal)) {
+                    if (entry.getValue() != null && !entry.getValue().trim().isEmpty()) {
+                        return entry.getValue();
+                    }
+                }
+            }
+        }
+        return originalBrand;
     }
 
     public static class ExportResult {

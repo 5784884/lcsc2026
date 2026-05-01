@@ -3,7 +3,9 @@ package com.lcsc.controller;
 import java.util.Objects;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.lcsc.common.Result;
+import com.lcsc.entity.BrandCustomName;
 import com.lcsc.entity.Product;
+import com.lcsc.service.BrandCustomNameService;
 import com.lcsc.service.ProductService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,8 +24,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -41,6 +45,9 @@ public class ProductController {
 
     @Autowired
     private ProductService productService;
+
+    @Autowired
+    private BrandCustomNameService brandCustomNameService;
 
     @Autowired
     private com.lcsc.service.crawler.DataExportService dataExportService;
@@ -152,6 +159,37 @@ public class ProductController {
         Boolean matchAny = false;
         if (params.get("matchAny") != null && !params.get("matchAny").toString().trim().isEmpty()) {
             matchAny = Boolean.valueOf(params.get("matchAny").toString());
+        }
+
+        // discountScheme 过滤：查出对应方案的品牌列表，与已有 brand 参数合并
+        if (params.get("discountScheme") != null && !params.get("discountScheme").toString().trim().isEmpty()) {
+            int scheme = Integer.parseInt(params.get("discountScheme").toString());
+            List<BrandCustomName> allConfigs = brandCustomNameService.list();
+            List<String> schemeBrands;
+            if (scheme == 0) {
+                // 默认折扣：未配置过的品牌 + 明确设为0的品牌
+                Set<String> nonDefaultBrands = allConfigs.stream()
+                        .filter(b -> b.getOriginalName() != null && b.getDiscountScheme() != null && b.getDiscountScheme() > 0)
+                        .map(b -> b.getOriginalName().trim().toLowerCase())
+                        .collect(Collectors.toSet());
+                schemeBrands = productService.getAllBrands().stream()
+                        .filter(b -> b != null && !nonDefaultBrands.contains(b.trim().toLowerCase()))
+                        .collect(Collectors.toList());
+            } else {
+                schemeBrands = allConfigs.stream()
+                        .filter(b -> b.getOriginalName() != null)
+                        .filter(b -> { int s = b.getDiscountScheme() != null ? b.getDiscountScheme() : 0; return s == scheme; })
+                        .map(BrandCustomName::getOriginalName)
+                        .collect(Collectors.toList());
+            }
+            if (brand != null && !brand.trim().isEmpty()) {
+                Set<String> existingBrands = Arrays.stream(brand.split("[,\\r\\n]+"))
+                        .map(String::trim).collect(Collectors.toSet());
+                schemeBrands = schemeBrands.stream()
+                        .filter(b -> existingBrands.contains(b.trim()))
+                        .collect(Collectors.toList());
+            }
+            brand = String.join(",", schemeBrands);
         }
 
         // 5. 调用 Service 层进行查询

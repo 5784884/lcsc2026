@@ -6,6 +6,7 @@ import CategoryManagement from '@/views/CategoryManagement.vue'
 import ImageManagement from '@/views/ImageManagement.vue'
 import AdvancedExport from '@/views/AdvancedExport.vue'
 import DataVisualization from '@/views/DataVisualization.vue'
+import BrandManagement from '@/views/BrandManagement.vue'
 
 const routes = [
   {
@@ -51,6 +52,11 @@ const routes = [
     path: '/visualization',
     name: 'DataVisualization',
     component: DataVisualization
+  },
+  {
+    path: '/brands',
+    name: 'BrandManagement',
+    component: BrandManagement
   }
 ]
 

@@ -83,11 +83,26 @@
                   placeholder="选择品牌(可多选)"
                   :max-tag-count="3"
                   show-search
+                  :filter-option="brandFilterOption"
                   allow-clear
               >
                 <a-select-option v-for="item in brandOptions" :key="item.value" :value="item.value">
                   {{ item.label }}
                 </a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+
+          <a-col :span="8">
+            <a-form-item label="折扣方案">
+              <a-select
+                  v-model:value="filterForm.discountScheme"
+                  placeholder="全部方案"
+                  allow-clear
+              >
+                <a-select-option :value="0">默认折扣</a-select-option>
+                <a-select-option :value="1">品牌折扣</a-select-option>
+                <a-select-option :value="2">立创折扣</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
@@ -108,33 +123,33 @@
         </a-row>
 
         <a-row :gutter="16">
-          <a-col :span="8">
+          <a-col :span="6">
             <a-form-item label="库存范围">
               <a-space>
                 <a-input-number
                     v-model:value="filterForm.stockMin"
                     placeholder="最小值"
                     :min="0"
-                    style="width: 120px"
+                    style="width: 100px"
                 />
                 <span>至</span>
                 <a-input-number
                     v-model:value="filterForm.stockMax"
                     placeholder="最大值"
                     :min="0"
-                    style="width: 120px"
+                    style="width: 100px"
                 />
               </a-space>
             </a-form-item>
 
             <a-form-item>
-              <a-space>
+              <a-space direction="vertical">
                 <a-checkbox v-model:checked="filterForm.matchAny">
                   <a-tooltip title="勾选后，满足库存或图片其中一项即可查出">
                     数量/图片 任意满足
                   </a-tooltip>
                 </a-checkbox>
-                <a-select v-model:value="sortOrder" style="width: 150px">
+                <a-select v-model:value="sortOrder" style="width: 160px">
                   <a-select-option value="default">默认排序</a-select-option>
                   <a-select-option value="asc">产品编号 (正序)</a-select-option>
                   <a-select-option value="desc">产品编号 (倒序)</a-select-option>
@@ -143,23 +158,53 @@
             </a-form-item>
           </a-col>
 
-          <a-col :span="16">
-            <a-form-item label="折扣设置（%）" required>
-              <a-space wrap>
-                <div v-for="(_, index) in 6" :key="index" style="display: inline-block">
-                  <div style="margin-bottom: 4px; font-size: 12px; color: #666">
-                    {{ index + 1 }}级折扣
-                  </div>
-                  <a-input-number
-                      v-model:value="filterForm.discounts[index]"
-                      :min="1"
-                      :max="100"
-                      :precision="0"
-                      style="width: 80px"
-                  />
-                </div>
-              </a-space>
-            </a-form-item>
+          <a-col :span="18">
+            <a-row :gutter="16">
+              <a-col :span="8">
+                <a-form-item label="默认折扣（%）" required>
+                  <a-space wrap>
+                    <div v-for="(_, index) in 6" :key="'def_' + index" style="display: inline-block">
+                      <div style="margin-bottom: 4px; font-size: 12px; color: #666">{{ index + 1 }}级</div>
+                      <a-input-number
+                          v-model:value="filterForm.discounts[index]"
+                          :min="1" :max="100" :precision="0"
+                          style="width: 65px"
+                      />
+                    </div>
+                  </a-space>
+                </a-form-item>
+              </a-col>
+
+              <a-col :span="8">
+                <a-form-item label="品牌折扣（%）">
+                  <a-space wrap>
+                    <div v-for="(_, index) in 6" :key="'b1_' + index" style="display: inline-block">
+                      <div style="margin-bottom: 4px; font-size: 12px; color: #666">{{ index + 1 }}级</div>
+                      <a-input-number
+                          v-model:value="filterForm.brandDiscounts1[index]"
+                          :min="1" :max="100" :precision="0"
+                          style="width: 65px"
+                      />
+                    </div>
+                  </a-space>
+                </a-form-item>
+              </a-col>
+
+              <a-col :span="8">
+                <a-form-item label="立创折扣（%）">
+                  <a-space wrap>
+                    <div v-for="(_, index) in 6" :key="'b2_' + index" style="display: inline-block">
+                      <div style="margin-bottom: 4px; font-size: 12px; color: #666">{{ index + 1 }}级</div>
+                      <a-input-number
+                          v-model:value="filterForm.brandDiscounts2[index]"
+                          :min="1" :max="100" :precision="0"
+                          style="width: 65px"
+                      />
+                    </div>
+                  </a-space>
+                </a-form-item>
+              </a-col>
+            </a-row>
           </a-col>
         </a-row>
 
@@ -299,7 +344,8 @@ import {
   SaveOutlined
 } from '@ant-design/icons-vue'
 import { getAllShops } from '@/api/shop'
-import { getAllCategories, getAllBrands } from '@/api/product'
+import { getAllCategories } from '@/api/product'
+import { getBrandOptions } from '@/api/brand'
 import { addToTaskList, exportTaobaoExcel, type ExportTaskItem } from '@/api/export'
 
 import type { Shop } from '@/types'
@@ -315,6 +361,9 @@ interface FilterFormState {
   stockMax: number | undefined
   discounts: number[]
   matchAny: boolean
+  brandDiscounts1: number[]
+  brandDiscounts2: number[]
+  discountScheme: number | undefined
 }
 
 interface ExportScheme {
@@ -334,7 +383,10 @@ const filterForm = reactive<FilterFormState>({
   stockMin: undefined,
   stockMax: undefined,
   discounts: [90, 88, 85, 82, 80, 78],
-  matchAny: false
+  matchAny: false,
+  brandDiscounts1: [90, 88, 85, 82, 80, 78],
+  brandDiscounts2: [90, 88, 85, 82, 80, 78],
+  discountScheme: undefined
 })
 const sortOrder = ref('default')
 
@@ -359,6 +411,12 @@ const splitSize = ref<number | undefined>(undefined)
 const shopOptions = ref<{ label: string; value: number }[]>([])
 const brandOptions = ref<{ label: string; value: string }[]>([])
 
+const brandFilterOption = (input: string, option: any) => {
+  const val = (option.value || '').toLowerCase()
+  const label = (option.label || option.children?.[0] || '').toString().toLowerCase()
+  const kw = input.toLowerCase()
+  return val.includes(kw) || label.includes(kw)
+}
 const taskColumns = [
   { title: '序号', key: 'index', width: 60 },
   { title: '产品编号', dataIndex: 'productCode', key: 'productCode', width: 120 },
@@ -412,7 +470,10 @@ const handleSaveScheme = () => {
     stockMin: filterForm.stockMin,
     stockMax: filterForm.stockMax,
     discounts: [...filterForm.discounts],
-    matchAny: filterForm.matchAny
+    matchAny: filterForm.matchAny,
+    brandDiscounts1: [...filterForm.brandDiscounts1],
+    brandDiscounts2: [...filterForm.brandDiscounts2],
+    discountScheme: filterForm.discountScheme
   }
 
   const newScheme: ExportScheme = {
@@ -446,6 +507,9 @@ const handleApplyScheme = (schemeId: string) => {
   filterForm.stockMax = scheme.config.stockMax
   filterForm.discounts = [...scheme.config.discounts]
   filterForm.matchAny = scheme.config.matchAny || false
+  filterForm.brandDiscounts1 = scheme.config.brandDiscounts1 ? [...scheme.config.brandDiscounts1] : [90, 88, 85, 82, 80, 78]
+  filterForm.brandDiscounts2 = scheme.config.brandDiscounts2 ? [...scheme.config.brandDiscounts2] : [90, 88, 85, 82, 80, 78]
+  filterForm.discountScheme = scheme.config.discountScheme ?? undefined
 
   selectedCategories.value = [...scheme.config.categoryIds]
 
@@ -545,21 +609,14 @@ const loadAllCategoriesForSelector = async () => {
 
 const loadBrands = async () => {
   try {
-    const res: any = await getAllBrands()
+    const res: any = await getBrandOptions()
 
-    // 暴力提取数组：不管后端包了多少层壳，只要找到数组就拿出来
     let list: any[] = []
     if (Array.isArray(res)) list = res
     else if (res?.data && Array.isArray(res.data)) list = res.data
     else if (res?.data?.data && Array.isArray(res.data.data)) list = res.data.data
 
-    // 安全地将字符串数组转换为对象数组
-    brandOptions.value = list
-        .filter(item => item !== null && item !== undefined && item !== '') // 踢掉空数据
-        .map(item => ({
-          label: String(item),
-          value: String(item)
-        }))
+    brandOptions.value = list.filter(item => item !== null && item !== undefined)
 
   } catch (error) {
     console.error('品牌加载失败，但不影响页面运行:', error)
@@ -614,10 +671,12 @@ const handleAddTask = async () => {
       stockMax: filterForm.stockMax,
       discounts: filterForm.discounts,
       matchAny: filterForm.matchAny,
+      brandDiscounts1: filterForm.brandDiscounts1,
+      brandDiscounts2: filterForm.brandDiscounts2,
+      discountScheme: filterForm.discountScheme,
       currentTasks: taskList.value
     })
 
-    // 👇 前端进行正序/倒序排列
     if (sortOrder.value !== 'default') {
       updatedTasks.sort((a, b) => {
         const codeA = a.productCode || ''
@@ -645,12 +704,11 @@ const handleExport = async (format: 'excel' | 'csv') => {
     message.warning('任务列表为空，请先添加产品')
     return
   }
-  exportLoading.value = format // 记录当前导出的格式
+  exportLoading.value = format
   exportStatusText.value = '提交中...'
   try {
     const actualSplitSize = splitSize.value || taskList.value.length
     exportStatusText.value = '生成中，请稍候...'
-    // 🌟 将 format 参数传给刚才修改的 API 方法
     await exportTaobaoExcel(taskList.value, actualSplitSize, format)
     message.success('导出成功')
   } catch (error: any) {
@@ -671,6 +729,7 @@ const handleResetFilter = () => {
   filterForm.matchAny = false
   sortOrder.value = 'default'
   filterForm.discounts = [90, 88, 85, 82, 80, 78]
+  filterForm.discountScheme = undefined
   currentSchemeId.value = undefined
 }
 

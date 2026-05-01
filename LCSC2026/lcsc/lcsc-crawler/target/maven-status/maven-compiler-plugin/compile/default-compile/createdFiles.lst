@@ -1,3 +1,4 @@
+com\lcsc\mapper\BrandCustomNameMapper.class
 com\lcsc\service\crawler\network\HttpClientService.class
 com\lcsc\service\crawler\memory\MemoryOptimizer.class
 com\lcsc\config\MybatisPlusConfig.class
@@ -31,9 +32,11 @@ com\lcsc\service\crawler\error\CrawlerRetryExhaustedException.class
 com\lcsc\controller\CategoryController.class
 com\lcsc\dto\ExportTaskItem.class
 com\lcsc\service\CategoryLevel1CodeService.class
+com\lcsc\service\BrandCustomNameService.class
 com\lcsc\service\crawler\v3\CategoryCrawlerWorkerPool$ImageSelection.class
 com\lcsc\mapper\ShopMapper.class
 com\lcsc\service\crawler\network\HttpClientService$1.class
+com\lcsc\controller\BrandController.class
 com\lcsc\service\crawler\monitoring\CrawlerMetricsCollector$CrawlerMetrics.class
 com\lcsc\service\crawler\DataExportService.class
 com\lcsc\config\DatabaseInitializationConfig.class
@@ -42,6 +45,7 @@ com\lcsc\service\crawler\LcscApiEndpoints$Config.class
 com\lcsc\dto\DownloadTask$DownloadType.class
 com\lcsc\service\crawler\CategoryCrawlerService$1.class
 com\lcsc\entity\TaskLog$LogLevel.class
+com\lcsc\controller\AdvancedExportController$ExportJobStatus.class
 com\lcsc\service\RedisTaskLogService.class
 com\lcsc\service\crawler\DataPersistenceService.class
 com\lcsc\config\HttpDebugConfig.class
@@ -101,6 +105,7 @@ com\lcsc\service\crawler\DataExportService$ExportResult.class
 com\lcsc\dto\ImageLinkImportResult.class
 com\lcsc\service\AdvancedExportService.class
 com\lcsc\config\HttpClientConfig$RateLimitInterceptor.class
+com\lcsc\entity\BrandCustomName.class
 com\lcsc\service\ImageLinkService.class
 com\lcsc\entity\CategoryLevel2Code.class
 com\lcsc\service\crawler\network\HttpClientService$NetworkException.class

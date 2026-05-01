@@ -41,6 +41,26 @@ public class ExportTaskItem {
     private List<BigDecimal> discounts;
 
     /**
+     * 品牌专属折扣方案1：指定品牌列表（原始名称或自定义名称，换行分隔）
+     */
+    private String brandDiscounts1Brands;
+
+    /**
+     * 品牌专属折扣方案1：6级折扣
+     */
+    private List<BigDecimal> brandDiscounts1;
+
+    /**
+     * 品牌专属折扣方案2：指定品牌列表
+     */
+    private String brandDiscounts2Brands;
+
+    /**
+     * 品牌专属折扣方案2：6级折扣
+     */
+    private List<BigDecimal> brandDiscounts2;
+
+    /**
      * 添加时间戳（用于排序）
      */
     private Long addedAt;
@@ -93,6 +113,18 @@ public class ExportTaskItem {
     public void setDiscounts(List<BigDecimal> discounts) {
         this.discounts = discounts;
     }
+
+    public String getBrandDiscounts1Brands() { return brandDiscounts1Brands; }
+    public void setBrandDiscounts1Brands(String brandDiscounts1Brands) { this.brandDiscounts1Brands = brandDiscounts1Brands; }
+
+    public List<BigDecimal> getBrandDiscounts1() { return brandDiscounts1; }
+    public void setBrandDiscounts1(List<BigDecimal> brandDiscounts1) { this.brandDiscounts1 = brandDiscounts1; }
+
+    public String getBrandDiscounts2Brands() { return brandDiscounts2Brands; }
+    public void setBrandDiscounts2Brands(String brandDiscounts2Brands) { this.brandDiscounts2Brands = brandDiscounts2Brands; }
+
+    public List<BigDecimal> getBrandDiscounts2() { return brandDiscounts2; }
+    public void setBrandDiscounts2(List<BigDecimal> brandDiscounts2) { this.brandDiscounts2 = brandDiscounts2; }
 
     public Long getAddedAt() {
         return addedAt;

@@ -50,6 +50,12 @@
                 </template>
                 高级导出
               </a-menu-item>
+              <a-menu-item key="/brands">
+                <template #icon>
+                  <TagOutlined />
+                </template>
+                品牌管理
+              </a-menu-item>
 <!--              <a-menu-item key="/product-resources">-->
 <!--                <template #icon>-->
 <!--                  <FileImageOutlined />-->
@@ -81,7 +87,8 @@ import {
   PictureOutlined,
   FolderOutlined,
   FileImageOutlined,
-  CloudDownloadOutlined
+  CloudDownloadOutlined,
+  TagOutlined
 } from '@ant-design/icons-vue'
 
 const router = useRouter()

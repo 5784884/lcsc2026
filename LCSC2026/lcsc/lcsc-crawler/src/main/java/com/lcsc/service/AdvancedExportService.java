@@ -68,6 +68,9 @@ public class AdvancedExportService {
     @Autowired
     private com.lcsc.mapper.CategoryLevel3CodeMapper categoryLevel3CodeMapper;
 
+    @Autowired
+    private com.lcsc.service.BrandCustomNameService brandCustomNameService;
+
     /**
      * 添加产品到任务列表
      * @param request 筛选条件
@@ -104,6 +107,8 @@ public class AdvancedExportService {
             task.setShopId(shopId != null ? shopId : 0);
             task.setShopName(shopName);
             task.setDiscounts(request.getDiscounts());
+            task.setBrandDiscounts1(request.getBrandDiscounts1());
+            task.setBrandDiscounts2(request.getBrandDiscounts2());
             task.setAddedAt(System.currentTimeMillis());
             return task;
         }).collect(Collectors.toList());
@@ -133,11 +138,6 @@ public class AdvancedExportService {
      * @param tasks 任务列表
      * @return CSV文件字节数组
      */
-    /**
-     * 生成淘宝CSV文件 (分批次处理，流式写入防 OOM)
-     * @param tasks 任务列表
-     * @return CSV文件字节数组
-     */
     public byte[] generateTaobaoCsv(List<ExportTaskItem> tasks) throws IOException {
         log.info("开始生成淘宝CSV文件, 任务数量: {}", tasks.size());
 
@@ -153,6 +153,10 @@ public class AdvancedExportService {
 
         Map<Integer, Shop> shopMap = shopIds.isEmpty() ? new HashMap<>() :
                 shopMapper.selectBatchIds(shopIds).stream().collect(Collectors.toMap(Shop::getId, s -> s));
+
+        // 获取包含完整配置（自定义名称、打折方案）的品牌配置映射
+        Map<String, BrandCustomName> brandConfigMap = brandCustomNameService.list().stream()
+                .collect(Collectors.toMap(BrandCustomName::getOriginalName, b -> b, (v1, v2) -> v2));
 
         // 🌟 核心优化：使用 ByteArrayOutputStream 替代 StringBuilder 进行流式写入
         try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
@@ -194,11 +198,11 @@ public class AdvancedExportService {
                     if (product == null) continue;
                     boolean isGeneric = task.getShopId() == null || task.getShopId() == 0;
                     if (isGeneric) {
-                        appendProductRowGeneric(csvBatch, product, task);
+                        appendProductRowGeneric(csvBatch, product, task, brandConfigMap);
                     } else {
                         Shop shop = shopMap.get(task.getShopId());
                         if (shop == null) continue;
-                        appendProductRow(csvBatch, product, shop, task, imageLinkMap);
+                        appendProductRow(csvBatch, product, shop, task, imageLinkMap, brandConfigMap);
                     }
                 }
 
@@ -206,8 +210,6 @@ public class AdvancedExportService {
                 // 这样内存中永远只会保留一个 BATCH_SIZE (比如 1000 条) 大小的字符串数据，极大节省内存
                 outputStream.write(csvBatch.toString().getBytes(StandardCharsets.UTF_8));
                 csvBatch.setLength(0);
-
-                // 建议：如果你要导出几十万，这里还可以加上手动触发 GC 或者让线程稍微休眠的逻辑，目前这一步已经足够解决绝大部分问题。
             }
 
             log.info("淘宝CSV文件生成完成");
@@ -235,6 +237,10 @@ public class AdvancedExportService {
 
         Map<Integer, Shop> shopMap = shopIds.isEmpty() ? new HashMap<>() :
                 shopMapper.selectBatchIds(shopIds).stream().collect(Collectors.toMap(Shop::getId, s -> s));
+
+        // 获取包含完整配置的品牌配置映射
+        Map<String, BrandCustomName> brandConfigMap = brandCustomNameService.list().stream()
+                .collect(Collectors.toMap(BrandCustomName::getOriginalName, b -> b, (v1, v2) -> v2));
 
         try (SXSSFWorkbook workbook = new SXSSFWorkbook(1000);
              ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
@@ -273,11 +279,11 @@ public class AdvancedExportService {
                     if (product == null) continue;
                     boolean isGeneric = task.getShopId() == null || task.getShopId() == 0;
                     if (isGeneric) {
-                        createProductRowGeneric(sheet, rowIndex++, product, task);
+                        createProductRowGeneric(sheet, rowIndex++, product, task, brandConfigMap);
                     } else {
                         Shop shop = shopMap.get(task.getShopId());
                         if (shop == null) continue;
-                        createProductRow(sheet, rowIndex++, product, shop, task, imageLinkMap);
+                        createProductRow(sheet, rowIndex++, product, shop, task, imageLinkMap, brandConfigMap);
                     }
                 }
             }
@@ -321,7 +327,8 @@ public class AdvancedExportService {
      * 创建产品数据行
      */
     private void createProductRow(Sheet sheet, int rowIndex, Product product, Shop shop,
-                                  ExportTaskItem task, Map<String, Map<Integer, String>> imageLinkMap) {
+                                  ExportTaskItem task, Map<String, Map<Integer, String>> imageLinkMap,
+                                  Map<String, BrandCustomName> brandConfigMap) {
         Row row = sheet.createRow(rowIndex);
         int col = 0;
 
@@ -344,7 +351,7 @@ public class AdvancedExportService {
         col += 3;
 
         // 7. price: 最高阶价格*折扣
-        BigDecimal price = calculatePrice(product, task.getDiscounts());
+        BigDecimal price = calculatePrice(product, resolveDiscounts(product, task, brandConfigMap));
         row.createCell(col++).setCellValue(price.toPlainString());
 
         // 8. auction_increment: 空
@@ -399,13 +406,13 @@ public class AdvancedExportService {
         col++;
 
         // 30. skuProps: 调用真实库存，自定义选为固定1
-        row.createCell(col++).setCellValue(buildSkuProps(product, task.getDiscounts(), ladderCount));
+        row.createCell(col++).setCellValue(buildSkuProps(product, resolveDiscounts(product, task, brandConfigMap), ladderCount));
 
         // 31-32. inputPids, inputValues: 空（2个字段）
         col += 2;
 
-        // 33. outer_id: 品牌（&替换为空格）
-        String outerId = product.getBrand() != null ? product.getBrand().replace("&", " ") : "";
+        // 33. outer_id: 品牌（优先自定义名称，&替换为空格）
+        String outerId = resolveBrandName(product.getBrand(), brandConfigMap).replace("&", " ");
         row.createCell(col++).setCellValue(outerId);
 
         // 34. propAlias: 销售属性别名（空）
@@ -575,7 +582,7 @@ public class AdvancedExportService {
      * 追加产品数据行
      */
     private void appendProductRow(StringBuilder csv, Product product, Shop shop, ExportTaskItem task,
-                                  Map<String, Map<Integer, String>> imageLinkMap) {
+                                  Map<String, Map<Integer, String>> imageLinkMap, Map<String, BrandCustomName> brandConfigMap) {
         // 0. title: 型号、封装 三级分类、二级分类、一级分类
         String title = buildTitle(product);
         csv.append(escapeCsv(title)).append(",");
@@ -596,7 +603,7 @@ public class AdvancedExportService {
         csv.append(",,,");
 
         // 7. price: 最高阶价格*折扣
-        BigDecimal price = calculatePrice(product, task.getDiscounts());
+        BigDecimal price = calculatePrice(product, resolveDiscounts(product, task, brandConfigMap));
         csv.append(price.toPlainString()).append(",");
 
         // 8. auction_increment: 空
@@ -634,14 +641,14 @@ public class AdvancedExportService {
         csv.append(",");
 
         // 30. skuProps: 调用真实库存，自定义选为固定1
-        String skuProps = buildSkuProps(product, task.getDiscounts(), ladderCount);
+        String skuProps = buildSkuProps(product, resolveDiscounts(product, task, brandConfigMap), ladderCount);
         csv.append(skuProps).append(",");
 
         // 31-32. inputPids, inputValues: 空
         csv.append(",,");
 
         // 33. outer_id
-        String outerId = product.getBrand() != null ? product.getBrand().replace("&", " ") : "";
+        String outerId = resolveBrandName(product.getBrand(), brandConfigMap).replace("&", " ");
         csv.append(escapeCsv(outerId)).append(",");
 
         // 34. propAlias: 空
@@ -740,8 +747,7 @@ public class AdvancedExportService {
         return title.toString().trim().replaceAll("\\s+", " ");
     }
 
-    // 🌟🌟 核心逻辑：计算宝贝价格 🌟🌟
-// 🌟🌟 核心逻辑：计算宝贝价格 (取最后一级阶梯价 × 最后一级折扣，保留所有小数位) 🌟🌟
+    // 🌟🌟 核心逻辑：计算宝贝价格 (取最后一级阶梯价 × 最后一级折扣，保留所有小数位) 🌟🌟
     private BigDecimal calculatePrice(Product product, List<BigDecimal> discounts) {
         BigDecimal minPrice = null;
         int validLadderCount = 1; // 记录最后一个有效阶梯的索引
@@ -842,7 +848,6 @@ public class AdvancedExportService {
         return ":1:0:|" + imageUrl;
     }
 
-    // 🌟🌟 核心逻辑：生成SKU属性 🌟🌟
     // 🌟🌟 核心逻辑：生成SKU属性 🌟🌟
     private String buildSkuProps(Product product, List<BigDecimal> discounts, int ladderCount) {
         StringBuilder props = new StringBuilder();
@@ -978,11 +983,11 @@ public class AdvancedExportService {
      * 通用模式 CSV 行：C列(seller_cids)=空，W列(postage_id)=空，AC列(picture)=图片名称:1:0:|;
      */
 
-    private void appendProductRowGeneric(StringBuilder csv, Product product, ExportTaskItem task) {
+    private void appendProductRowGeneric(StringBuilder csv, Product product, ExportTaskItem task, Map<String, BrandCustomName> brandConfigMap) {
         int ladderCount = getLadderCount(product);
         int stockQty = product.getTotalStockQuantity() != null ? product.getTotalStockQuantity() : 0;
         int num = (ladderCount * stockQty) + 2;
-        BigDecimal price = calculatePrice(product, task.getDiscounts());
+        BigDecimal price = calculatePrice(product, resolveDiscounts(product, task, brandConfigMap));
 
         csv.append(escapeCsv(buildTitle(product))).append(","); // 0. title
         csv.append(FIXED_CID).append(",");                      // 1. cid
@@ -1011,9 +1016,9 @@ public class AdvancedExportService {
         csv.append(imageName).append(":1:0:|;").append(",");
 
         csv.append(",");                                         // 29. video
-        csv.append(escapeCsv(buildSkuProps(product, task.getDiscounts(), ladderCount))).append(","); // 30. skuProps
+        csv.append(escapeCsv(buildSkuProps(product, resolveDiscounts(product, task, brandConfigMap), ladderCount))).append(","); // 30. skuProps
         csv.append(",,");                                        // 31-32. 空
-        String outerId = product.getBrand() != null ? product.getBrand().replace("&", " ") : "";
+        String outerId = resolveBrandName(product.getBrand(), brandConfigMap).replace("&", " ");
         csv.append(escapeCsv(outerId)).append(",");              // 33. outer_id
         csv.append(",");                                         // 34. 空
         csv.append(",,,,,,,,,,");                               // 35-44. 空
@@ -1035,7 +1040,7 @@ public class AdvancedExportService {
     /**
      * 通用模式 Excel 行：C列(seller_cids)=空，W列(postage_id)=空，AC列(picture)=图片名称:1:0:|;
      */
-    private void createProductRowGeneric(Sheet sheet, int rowIndex, Product product, ExportTaskItem task) {
+    private void createProductRowGeneric(Sheet sheet, int rowIndex, Product product, ExportTaskItem task, Map<String, BrandCustomName> brandConfigMap) {
         Row row = sheet.createRow(rowIndex);
         int col = 0;
         int ladderCount = getLadderCount(product);
@@ -1049,7 +1054,7 @@ public class AdvancedExportService {
         col += 3;                                                          // 4-6. 空
 
         // 🌟 同样必须使用 toPlainString()
-        row.createCell(col++).setCellValue(calculatePrice(product, task.getDiscounts()).toPlainString());
+        row.createCell(col++).setCellValue(calculatePrice(product, resolveDiscounts(product, task, brandConfigMap)).toPlainString());
 
         col++;                                                             // 8. 空
         row.createCell(col++).setCellValue(num);                          // 9. num
@@ -1076,9 +1081,9 @@ public class AdvancedExportService {
         row.createCell(col++).setCellValue(imageName + ":1:0:|;");
 
         col++;                                                             // 29. video
-        row.createCell(col++).setCellValue(buildSkuProps(product, task.getDiscounts(), ladderCount)); // 30. skuProps
+        row.createCell(col++).setCellValue(buildSkuProps(product, resolveDiscounts(product, task, brandConfigMap), ladderCount)); // 30. skuProps
         col += 2;                                                          // 31-32. 空
-        String outerId = product.getBrand() != null ? product.getBrand().replace("&", " ") : "";
+        String outerId = resolveBrandName(product.getBrand(), brandConfigMap).replace("&", " ");
         row.createCell(col++).setCellValue(outerId);                      // 33. outer_id
         col += 11;                                                         // 34-44. 空
         row.createCell(col++).setCellValue(0);                            // 45. buyareatype
@@ -1134,5 +1139,29 @@ public class AdvancedExportService {
                 p.setCategoryLevel3CustomName(c.getCustomName() != null && !c.getCustomName().isEmpty() ? c.getCustomName() : c.getCategoryLevel3Name());
             }
         }
+    }
+
+    private String resolveBrandName(String originalBrand, Map<String, BrandCustomName> configMap) {
+        if (originalBrand == null) return "";
+        if (configMap != null && configMap.containsKey(originalBrand)) {
+            String custom = configMap.get(originalBrand).getCustomName();
+            if (custom != null && !custom.isEmpty()) return custom;
+        }
+        return originalBrand;
+    }
+
+    private List<BigDecimal> resolveDiscounts(Product product, ExportTaskItem task, Map<String, BrandCustomName> configMap) {
+        String originalBrand = product.getBrand();
+        if (originalBrand != null && configMap != null && configMap.containsKey(originalBrand)) {
+            Integer scheme = configMap.get(originalBrand).getDiscountScheme();
+            if (scheme != null) {
+                if (scheme == 1 && task.getBrandDiscounts1() != null && !task.getBrandDiscounts1().isEmpty()) {
+                    return task.getBrandDiscounts1();
+                } else if (scheme == 2 && task.getBrandDiscounts2() != null && !task.getBrandDiscounts2().isEmpty()) {
+                    return task.getBrandDiscounts2();
+                }
+            }
+        }
+        return task.getDiscounts(); // 走默认折扣
     }
 }

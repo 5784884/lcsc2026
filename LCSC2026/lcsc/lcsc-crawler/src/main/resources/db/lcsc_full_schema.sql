@@ -222,3 +222,14 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 ALTER TABLE `shops`
     ADD COLUMN `seller_category_id` VARCHAR(100) NULL COMMENT '店铺分类码（用于淘宝导出）' AFTER `shipping_template_id`;
+
+-- 品牌自定义名称表
+CREATE TABLE IF NOT EXISTS `brand_custom_names` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `original_name` varchar(200) NOT NULL COMMENT '原始品牌名称',
+  `custom_name` varchar(200) DEFAULT NULL COMMENT '自定义品牌名称',
+  `discount_scheme` int DEFAULT 0 COMMENT '打折方案：0=默认，1=品牌折扣1，2=品牌折扣2',
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_original_name` (`original_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='品牌自定义名称表';

@@ -59,6 +59,26 @@ public class AdvancedExportRequest {
      */
     private List<BigDecimal> discounts;
 
+    /**
+     * 品牌专属折扣方案1：品牌列表（换行分隔，支持原始名称和自定义名称）
+     */
+    private String brandDiscounts1Brands;
+
+    /**
+     * 品牌专属折扣方案1：6级折扣
+     */
+    private List<BigDecimal> brandDiscounts1;
+
+    /**
+     * 品牌专属折扣方案2：品牌列表
+     */
+    private String brandDiscounts2Brands;
+
+    /**
+     * 品牌专属折扣方案2：6级折扣
+     */
+    private List<BigDecimal> brandDiscounts2;
+
     // --- Getters and Setters ---
     public Integer getShopId() {
         return shopId;
@@ -127,4 +147,20 @@ public class AdvancedExportRequest {
     public void setDiscounts(List<BigDecimal> discounts) {
         this.discounts = discounts;
     }
+
+    public String getBrandDiscounts1Brands() { return brandDiscounts1Brands; }
+    public void setBrandDiscounts1Brands(String v) { this.brandDiscounts1Brands = v; }
+
+    public List<BigDecimal> getBrandDiscounts1() { return brandDiscounts1; }
+    public void setBrandDiscounts1(List<BigDecimal> v) { this.brandDiscounts1 = v; }
+
+    public String getBrandDiscounts2Brands() { return brandDiscounts2Brands; }
+    public void setBrandDiscounts2Brands(String v) { this.brandDiscounts2Brands = v; }
+
+    public List<BigDecimal> getBrandDiscounts2() { return brandDiscounts2; }
+    public void setBrandDiscounts2(List<BigDecimal> v) { this.brandDiscounts2 = v; }
+
+    private Integer discountScheme;
+    public Integer getDiscountScheme() { return discountScheme; }
+    public void setDiscountScheme(Integer discountScheme) { this.discountScheme = discountScheme; }
 }

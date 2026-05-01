@@ -3,7 +3,10 @@ package com.lcsc.controller;
 import com.lcsc.common.Result;
 import com.lcsc.dto.AdvancedExportRequest;
 import com.lcsc.dto.ExportTaskItem;
+import com.lcsc.entity.BrandCustomName;
 import com.lcsc.service.AdvancedExportService;
+import com.lcsc.service.BrandCustomNameService;
+import com.lcsc.service.ProductService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -36,6 +39,12 @@ public class AdvancedExportController {
 
     @Autowired
     private AdvancedExportService advancedExportService;
+
+    @Autowired
+    private BrandCustomNameService brandCustomNameService;
+
+    @Autowired
+    private ProductService productService;
 
     // 异步任务状态存储（内存，重启丢失，但导出任务是短暂的）
     private static final ConcurrentHashMap<String, ExportJobStatus> jobStatusMap = new ConcurrentHashMap<>();
@@ -421,6 +430,16 @@ public class AdvancedExportController {
                         .map(n -> new BigDecimal(n.toString()))
                         .collect(Collectors.toList()));
             }
+            if (taskMap.containsKey("brandDiscounts1")) {
+                @SuppressWarnings("unchecked")
+                List<Number> list = (List<Number>) taskMap.get("brandDiscounts1");
+                if (list != null) task.setBrandDiscounts1(list.stream().map(n -> new BigDecimal(n.toString())).collect(Collectors.toList()));
+            }
+            if (taskMap.containsKey("brandDiscounts2")) {
+                @SuppressWarnings("unchecked")
+                List<Number> list = (List<Number>) taskMap.get("brandDiscounts2");
+                if (list != null) task.setBrandDiscounts2(list.stream().map(n -> new BigDecimal(n.toString())).collect(Collectors.toList()));
+            }
             if (taskMap.containsKey("addedAt")) task.setAddedAt(((Number) taskMap.get("addedAt")).longValue());
             return task;
         }).collect(Collectors.toList());
@@ -440,31 +459,24 @@ public class AdvancedExportController {
         return taskMaps.stream().map(taskMap -> {
             ExportTaskItem task = new ExportTaskItem();
 
-            if (taskMap.containsKey("productCode")) {
-                task.setProductCode((String) taskMap.get("productCode"));
-            }
-            if (taskMap.containsKey("model")) {
-                task.setModel((String) taskMap.get("model"));
-            }
-            if (taskMap.containsKey("brand")) {
-                task.setBrand((String) taskMap.get("brand"));
-            }
-            if (taskMap.containsKey("shopId")) {
-                task.setShopId(((Number) taskMap.get("shopId")).intValue());
-            }
-            if (taskMap.containsKey("shopName")) {
-                task.setShopName((String) taskMap.get("shopName"));
-            }
+            if (taskMap.containsKey("productCode")) task.setProductCode((String) taskMap.get("productCode"));
+            if (taskMap.containsKey("model")) task.setModel((String) taskMap.get("model"));
+            if (taskMap.containsKey("brand")) task.setBrand((String) taskMap.get("brand"));
+            if (taskMap.containsKey("shopId")) task.setShopId(((Number) taskMap.get("shopId")).intValue());
+            if (taskMap.containsKey("shopName")) task.setShopName((String) taskMap.get("shopName"));
             if (taskMap.containsKey("discounts")) {
                 List<Number> discountNumbers = (List<Number>) taskMap.get("discounts");
-                List<BigDecimal> discounts = discountNumbers.stream()
-                        .map(n -> new BigDecimal(n.toString()))
-                        .collect(Collectors.toList());
-                task.setDiscounts(discounts);
+                task.setDiscounts(discountNumbers.stream().map(n -> new BigDecimal(n.toString())).collect(Collectors.toList()));
             }
-            if (taskMap.containsKey("addedAt")) {
-                task.setAddedAt(((Number) taskMap.get("addedAt")).longValue());
+            if (taskMap.containsKey("brandDiscounts1")) {
+                List<Number> list = (List<Number>) taskMap.get("brandDiscounts1");
+                if (list != null) task.setBrandDiscounts1(list.stream().map(n -> new BigDecimal(n.toString())).collect(Collectors.toList()));
             }
+            if (taskMap.containsKey("brandDiscounts2")) {
+                List<Number> list = (List<Number>) taskMap.get("brandDiscounts2");
+                if (list != null) task.setBrandDiscounts2(list.stream().map(n -> new BigDecimal(n.toString())).collect(Collectors.toList()));
+            }
+            if (taskMap.containsKey("addedAt")) task.setAddedAt(((Number) taskMap.get("addedAt")).longValue());
 
             return task;
         }).collect(Collectors.toList());
@@ -529,6 +541,45 @@ public class AdvancedExportController {
         Object matchAnyObj = requestBody.get("matchAny");
         if (matchAnyObj != null) {
             request.setMatchAny((Boolean) matchAnyObj);
+        }
+
+        if (requestBody.containsKey("brandDiscounts1")) {
+            @SuppressWarnings("unchecked")
+            List<Number> list = (List<Number>) requestBody.get("brandDiscounts1");
+            if (list != null) request.setBrandDiscounts1(list.stream().map(n -> new java.math.BigDecimal(n.toString())).collect(Collectors.toList()));
+        }
+        if (requestBody.containsKey("brandDiscounts2")) {
+            @SuppressWarnings("unchecked")
+            List<Number> list = (List<Number>) requestBody.get("brandDiscounts2");
+            if (list != null) request.setBrandDiscounts2(list.stream().map(n -> new java.math.BigDecimal(n.toString())).collect(Collectors.toList()));
+        }
+
+        Object discountSchemeObj = requestBody.get("discountScheme");
+        if (discountSchemeObj != null) {
+            int scheme = ((Number) discountSchemeObj).intValue();
+            request.setDiscountScheme(scheme);
+            List<BrandCustomName> allConfigs = brandCustomNameService.list();
+            List<String> schemeBrands;
+            if (scheme == 0) {
+                Set<String> nonDefaultBrands = allConfigs.stream()
+                        .filter(b -> b.getOriginalName() != null && b.getDiscountScheme() != null && b.getDiscountScheme() > 0)
+                        .map(b -> b.getOriginalName().trim().toLowerCase())
+                        .collect(Collectors.toSet());
+                schemeBrands = productService.getAllBrands().stream()
+                        .filter(b -> b != null && !nonDefaultBrands.contains(b.trim().toLowerCase()))
+                        .collect(Collectors.toList());
+            } else {
+                schemeBrands = allConfigs.stream()
+                        .filter(b -> b.getOriginalName() != null)
+                        .filter(b -> { int s = b.getDiscountScheme() != null ? b.getDiscountScheme() : 0; return s == scheme; })
+                        .map(BrandCustomName::getOriginalName)
+                        .collect(Collectors.toList());
+            }
+            List<String> existing = request.getBrands();
+            if (existing != null && !existing.isEmpty()) {
+                schemeBrands.retainAll(existing);
+            }
+            request.setBrands(schemeBrands);
         }
 
         return request;
